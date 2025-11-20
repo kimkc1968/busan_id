@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LeoX 직원 ID 및 현황 대시보드</title>
+    <title>LeoX 직원 ID 및 현황 대시보드 (로그인)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
@@ -32,12 +32,49 @@
     </style>
 </head>
 <body class="p-4 sm:p-10 flex justify-center">
-    <div class="w-full lg:max-w-6xl bg-white rounded-2xl dashboard-card overflow-hidden">
+
+    <!-- Loading Indicator -->
+    <div id="loadingOverlay" class="fixed inset-0 bg-white bg-opacity-75 flex items-center justify-center z-50">
+        <div class="flex flex-col items-center">
+            <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+            <p class="mt-4 text-gray-700">데이터 로딩 중...</p>
+        </div>
+    </div>
+
+    <!-- Login Modal/Gatekeeper -->
+    <div id="loginModal" class="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center z-40" style="display: none;">
+        <div class="bg-white p-8 rounded-xl shadow-2xl w-full max-w-sm">
+            <h2 class="text-2xl font-bold text-gray-800 mb-6 text-center">LeoX 현황판 로그인</h2>
+            <form id="loginForm">
+                <div class="mb-4">
+                    <label for="loginId" class="block text-sm font-medium text-gray-700 mb-1">아이디</label>
+                    <input type="text" id="loginId" required class="w-full p-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500">
+                </div>
+                <div class="mb-6">
+                    <label for="loginPw" class="block text-sm font-medium text-gray-700 mb-1">비밀번호</label>
+                    <input type="password" id="loginPw" required class="w-full p-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500">
+                </div>
+                <p id="loginError" class="text-red-500 text-sm mb-4 text-center" style="display: none;"></p>
+                <button type="submit" class="w-full bg-blue-600 text-white p-3 rounded-lg font-semibold hover:bg-blue-700 transition duration-150 shadow-md">로그인</button>
+            </form>
+            <!-- 모의 계정 안내 문구 완전히 삭제됨 -->
+        </div>
+    </div>
+
+    <!-- Dashboard Content (Hidden until login success) -->
+    <div id="dashboardContent" class="w-full lg:max-w-6xl bg-white rounded-2xl dashboard-card overflow-hidden" style="display: none;">
         
         <!-- Header Section -->
-        <header class="p-6 sm:p-8 bg-white border-b border-gray-100">
-            <h1 class="text-3xl font-extrabold text-gray-800">LeoX 인력 현황 대시보드</h1>
-            <p class="text-md text-gray-500 mt-2">직원 아이디, 근무 여부 및 LeoX 시스템 상태 확인</p>
+        <header class="p-6 sm:p-8 bg-white border-b border-gray-100 flex justify-between items-start">
+            <div>
+                <h1 class="text-3xl font-extrabold text-gray-800">LeoX 인력 현황 대시보드</h1>
+                <p class="text-md text-gray-500 mt-2">직원 아이디, 근무 여부 및 LeoX 시스템 상태 확인</p>
+            </div>
+            <!-- 업데이트 날짜 추가 -->
+            <div class="text-right mt-1">
+                <p class="text-sm font-semibold text-gray-600">업데이트 날짜</p>
+                <p class="text-lg font-bold text-blue-600">2025.11.20 (목)</p>
+            </div>
         </header>
 
         <!-- Filter Controls Section -->
@@ -70,22 +107,45 @@
                         <th class="px-6 py-4 text-center text-xs font-bold text-blue-700 uppercase tracking-wider rounded-tr-xl">LeoX 상태</th>
                     </tr>
                 </thead>
-                <!-- JavaScript로 데이터가 동적으로 채워질 곳 -->
                 <tbody id="employeeTableBody" class="divide-y divide-gray-100">
                     <!-- Dynamic Rows will be inserted here -->
                 </tbody>
             </table>
         </div>
 
-        <!-- Footer Section -->
+        <!-- Footer Section (Text removed) -->
         <footer class="p-6 text-sm text-gray-500 text-center border-t border-gray-100 bg-gray-50 rounded-b-2xl">
-            인원 관리를 위한 현황판입니다. Update 25.11.20
+            <!-- Footer content removed as requested. -->
         </footer>
     </div>
 
-    <script>
-        // 직원 데이터 배열 (이 데이터를 수정하여 테이블 내용을 변경하세요)
-        const employeeData = [
+    <script type="module">
+        // Firebase Imports
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, collection, onSnapshot, getDocs, query, limit } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Firebase Global Configuration
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        // Mock Credentials for UI Gatekeeper
+        const MOCK_ID = 'leox';
+        const MOCK_PW = 'barogo2025'; // Updated password
+
+        // Application State
+        let db, auth, userId;
+        let isAuthReady = false;
+        let isLoggedIn = false;
+        let employeeData = [];
+
+        // Set Firebase Debug Level (Optional, but useful for debugging)
+        setLogLevel('Debug');
+
+        // Initial Data for Firestore
+        const staticEmployeeData = [
             { name: "김윤지", id: "busan001", status: "근무중", leoxStatus: "정상" },
             { name: "이정하", id: "busan002", status: "퇴사", leoxStatus: "삭제" },
             { name: "변정인", id: "busan003", status: "근무중", leoxStatus: "정상" },
@@ -109,12 +169,19 @@
             { name: "없음", id: "busan021", status: "신청 없음", leoxStatus: "미존재" },
             { name: "고성자", id: "busan022", status: "근무중", leoxStatus: "정상" },
             { name: "이수진", id: "busan023", status: "근무중", leoxStatus: "정상" },
+            // 새로운 직원 2명 추가
+            { name: "장지애", id: "jiae611", status: "근무중", leoxStatus: "정상" },
+            { name: "윤하준", id: "avort", status: "근무중", leoxStatus: "정상" },
         ];
+
+
+        // Utility Functions
+        function showElement(id) { document.getElementById(id).style.display = 'flex'; }
+        function hideElement(id) { document.getElementById(id).style.display = 'none'; }
+
 
         /**
          * 상태 텍스트에 따라 기본 색상 그룹을 반환합니다.
-         * @param {string} statusText - 상태 텍스트.
-         * @returns {string} 'green', 'red', 'gray' 중 하나.
          */
         function getStatusGroup(statusText) {
             switch (statusText) {
@@ -133,8 +200,6 @@
 
         /**
          * 상태 그룹에 따라 뱃지와 행 배경색 클래스를 반환합니다.
-         * @param {string} statusGroup - 'green', 'red', 'gray' 중 하나.
-         * @returns {{badgeBg: string, badgeText: string, rowBg: string}} Tailwind CSS 클래스 객체.
          */
         function getStatusClasses(statusGroup) {
             switch (statusGroup) {
@@ -142,28 +207,26 @@
                     return { 
                         badgeBg: 'bg-green-100', 
                         badgeText: 'text-green-700', 
-                        rowBg: 'bg-green-50' // 행 배경색: 연한 녹색
+                        rowBg: 'bg-green-50'
                     };
                 case 'red':
                     return { 
                         badgeBg: 'bg-red-100', 
                         badgeText: 'text-red-700', 
-                        rowBg: 'bg-red-50'   // 행 배경색: 연한 붉은색
+                        rowBg: 'bg-red-50'
                     };
                 case 'gray':
                 default:
                     return { 
                         badgeBg: 'bg-gray-200', 
                         badgeText: 'text-gray-600', 
-                        rowBg: 'bg-white' // 회색은 행 배경을 흰색으로 유지하여 깔끔하게 처리
+                        rowBg: 'bg-white'
                     };
             }
         }
 
         /**
          * 상태 텍스트로 뱃지 HTML을 생성합니다.
-         * @param {string} statusText - 상태 텍스트.
-         * @returns {string} 뱃지 HTML 문자열.
          */
         function createStatusBadge(statusText) {
             const statusGroup = getStatusGroup(statusText);
@@ -172,13 +235,24 @@
         }
 
         /**
-         * 모든 직원 데이터를 기반으로 테이블 본문을 렌더링합니다.
+         * 테이블 본문을 렌더링하고 필터링을 적용합니다.
          */
         function renderTable() {
             const tbody = document.getElementById('employeeTableBody');
-            if (!tbody) return;
+            if (!tbody || !isLoggedIn) return; // Only render if logged in
 
-            // 데이터 배열을 순회하며 HTML 문자열 생성
+            if (employeeData.length === 0) {
+                // 데이터가 없을 때 표시할 메시지
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="4" class="py-10 text-center text-lg text-gray-500 bg-gray-50 rounded-lg">
+                            데이터를 찾을 수 없습니다. (Firestore 연결 확인 필요)
+                        </td>
+                    </tr>
+                `;
+                return;
+            }
+
             const htmlContent = employeeData.map(data => {
                 const statusGroup = getStatusGroup(data.status);
                 const { rowBg } = getStatusClasses(statusGroup);
@@ -202,62 +276,201 @@
             }).join('');
 
             tbody.innerHTML = htmlContent;
+            // Re-apply filters after fresh render
+            filterTable(); 
         }
 
-        document.addEventListener('DOMContentLoaded', () => {
-            // 테이블 렌더링을 먼저 수행합니다.
-            renderTable();
+        /**
+         * 테이블의 행을 현재 필터 조건에 맞게 표시하거나 숨깁니다.
+         */
+        function filterTable() {
+            if (!isLoggedIn) return;
 
             const statusFilter = document.getElementById('statusFilter');
             const searchFilter = document.getElementById('searchFilter');
             
-            // 렌더링 후, 모든 행 요소를 다시 선택합니다.
-            let rows = document.querySelectorAll('.data-row');
+            const rows = document.querySelectorAll('.data-row');
+            const selectedStatus = statusFilter.value;
+            const searchQuery = searchFilter.value.toLowerCase().trim();
 
+            rows.forEach(row => {
+                const rowStatus = row.getAttribute('data-status');
+                const rowId = row.getAttribute('data-id').toLowerCase();
+                const rowName = row.getAttribute('data-name').toLowerCase();
 
-            /**
-             * 테이블의 행을 현재 필터 조건에 맞게 표시하거나 숨깁니다.
-             */
-            const filterTable = () => {
-                // 필터링 전에, 동적으로 생성된 행 요소를 다시 가져옵니다.
-                rows = document.querySelectorAll('.data-row');
+                // 1. 근무여부 필터 검사
+                const statusMatch = (selectedStatus === '전체' || rowStatus === selectedStatus);
 
-                const selectedStatus = statusFilter.value;
-                const searchQuery = searchFilter.value.toLowerCase().trim();
+                // 2. 검색어 필터 검사 (이름 또는 ID에 검색어 포함)
+                const searchMatch = (
+                    searchQuery === '' || 
+                    rowName.includes(searchQuery) || 
+                    rowId.includes(searchQuery)
+                );
 
-                rows.forEach(row => {
-                    const rowStatus = row.getAttribute('data-status');
-                    const rowId = row.getAttribute('data-id').toLowerCase();
-                    const rowName = row.getAttribute('data-name').toLowerCase();
+                if (statusMatch && searchMatch) {
+                    row.style.display = '';
+                } else {
+                    row.style.display = 'none';
+                }
+            });
+        }
 
-                    // 1. 근무여부 필터 검사
-                    const statusMatch = (selectedStatus === '전체' || rowStatus === selectedStatus);
+        // Firestore & Authentication Logic
 
-                    // 2. 검색어 필터 검사 (이름 또는 ID에 검색어 포함)
-                    const searchMatch = (
-                        searchQuery === '' || 
-                        rowName.includes(searchQuery) || 
-                        rowId.includes(searchQuery)
-                    );
+        /**
+         * Firestore에 초기 데이터를 추가합니다. (최초 1회 실행)
+         */
+        async function initializeData() {
+            const collectionPath = `artifacts/${appId}/users/${userId}/employee_status`;
+            const employeeRef = collection(db, collectionPath);
+            
+            try {
+                // 컬렉션에 문서가 있는지 확인
+                const q = query(employeeRef, limit(1));
+                const snapshot = await getDocs(q);
 
-                    // 두 조건 모두 만족하면 표시
-                    if (statusMatch && searchMatch) {
-                        row.style.display = '';
+                if (snapshot.empty) {
+                    console.log("No data found. Initializing with mock data.");
+                    
+                    // 초기 데이터 삽입
+                    for (const item of staticEmployeeData) {
+                        // ID를 문서 ID로 사용
+                        await setDoc(doc(employeeRef, item.id), item);
+                    }
+                    console.log("Initial data successfully written to Firestore.");
+                } else {
+                    console.log("Existing data found. Skipping initialization.");
+                }
+            } catch (e) {
+                console.error("Error during data initialization:", e);
+            }
+        }
+
+        /**
+         * Firestore 실시간 리스너를 설정합니다.
+         */
+        function setupFirestoreListener() {
+            const collectionPath = `artifacts/${appId}/users/${userId}/employee_status`;
+            const employeeRef = collection(db, collectionPath);
+            
+            // onSnapshot은 실시간으로 데이터를 수신하여 employeeData를 업데이트하고 테이블을 다시 그립니다.
+            onSnapshot(employeeRef, (snapshot) => {
+                employeeData = snapshot.docs.map(doc => ({
+                    ...doc.data(),
+                    docId: doc.id 
+                }));
+                console.log("Data refreshed from Firestore. Total items:", employeeData.length);
+                renderTable(); 
+            }, (error) => {
+                console.error("Firestore snapshot error:", error);
+            });
+        }
+
+        /**
+         * Firebase를 초기화하고 사용자 인증을 처리합니다.
+         */
+        async function initializeFirebase() {
+            try {
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+
+                // 캔버스 환경 인증 토큰 사용 또는 익명 로그인
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                    console.log("Signed in with custom token.");
+                } else {
+                    await signInAnonymously(auth);
+                    console.log("Signed in anonymously.");
+                }
+
+                // 인증 상태 변경 리스너
+                onAuthStateChanged(auth, async (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        isAuthReady = true;
+                        console.log("Auth State Changed. User ID:", userId);
+
+                        // 사용자 ID를 기반으로 초기 데이터 로드/설정
+                        await initializeData();
+
+                        // 로그인 성공 시에만 대시보드 표시 및 데이터 리스너 설정
+                        if (isLoggedIn) {
+                            setupFirestoreListener();
+                            hideElement('loadingOverlay');
+                            hideElement('loginModal');
+                            // Ensure dashboard content is explicitly shown
+                            document.getElementById('dashboardContent').style.display = 'block'; 
+                        } else {
+                            // Firebase 준비 완료 후, 아직 모의 로그인이 안 된 상태면 로딩 제거, 로그인 모달 표시
+                            hideElement('loadingOverlay');
+                            showElement('loginModal');
+                        }
                     } else {
-                        row.style.display = 'none';
+                        isAuthReady = true;
+                        userId = null;
+                        hideElement('loadingOverlay');
+                        showElement('loginModal');
+                        console.log("No user signed in.");
                     }
                 });
-            };
 
-            // 필터 이벤트 리스너 등록
+            } catch (error) {
+                console.error("Firebase Initialization or Auth Error:", error);
+                // 오류 발생 시 로딩 제거 후 로그인 모달 표시
+                hideElement('loadingOverlay');
+                showElement('loginModal');
+            }
+        }
+
+        // Event Handlers Setup
+        document.addEventListener('DOMContentLoaded', () => {
+            // Firebase 초기화 시작
+            initializeFirebase();
+
+            // 필터 이벤트 리스너 등록 (로그인 여부와 상관없이 DOM이 준비되면 등록)
+            const statusFilter = document.getElementById('statusFilter');
+            const searchFilter = document.getElementById('searchFilter');
             statusFilter.addEventListener('change', filterTable);
             searchFilter.addEventListener('input', filterTable);
 
-            // 초기 필터링 적용 (전체 보기 상태)
-            // renderTable()이 이미 데이터를 보여줬으므로, 필요 시 filterTable()을 호출합니다.
-            // filterTable(); 
+            // 로그인 폼 제출 처리
+            const loginForm = document.getElementById('loginForm');
+            const loginIdInput = document.getElementById('loginId');
+            const loginPwInput = document.getElementById('loginPw');
+            const loginError = document.getElementById('loginError');
+
+            loginForm.addEventListener('submit', (event) => {
+                event.preventDefault();
+                const inputId = loginIdInput.value.trim();
+                const inputPw = loginPwInput.value.trim();
+
+                // Check against the updated MOCK_ID and MOCK_PW
+                if (inputId === MOCK_ID && inputPw === MOCK_PW) {
+                    // 모의 로그인 성공
+                    isLoggedIn = true;
+                    loginError.style.display = 'none';
+
+                    // Firebase 인증이 준비된 경우에만 대시보드 표시 및 리스너 시작
+                    if (isAuthReady) {
+                        setupFirestoreListener();
+                        hideElement('loginModal');
+                        // Use 'block' display for the main container
+                        document.getElementById('dashboardContent').style.display = 'block'; 
+                    } else {
+                        // Firebase 인증이 아직 완료되지 않은 경우 (드문 경우) 로딩 화면 유지
+                        hideElement('loginModal');
+                        showElement('loadingOverlay');
+                    }
+                    console.log("Mock Login Success.");
+                } else {
+                    // 로그인 실패
+                    loginError.textContent = '아이디 또는 비밀번호가 올바르지 않습니다.';
+                    showElement('loginError');
+                }
+            });
         });
     </script>
 </body>
-
 </html>
