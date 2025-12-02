@@ -1,35 +1,17 @@
-<!DOCTYPE html>
+vv<!DOCTYPE html>
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LeoX 직원 ID 및 현황 대시보드 (편집 및 이력 관리)</title>
+    <title>LeoX 직원 ID 및 현황 대시보드</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Firebase SDK Modules for Persistence -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, setPersistence, browserSessionPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { 
-            getFirestore, collection, query, onSnapshot, 
-            addDoc, updateDoc, deleteDoc, where, getDocs, doc, writeBatch, setDoc, getDoc, setLogLevel
-        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-        
-        // Firestore 디버그 로깅 활성화
-        setLogLevel('debug');
-
-        // Firebase Global References (Accessible via window scope)
-        window.firebase = {
-            initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, setPersistence, browserSessionPersistence,
-            getFirestore, collection, query, onSnapshot, addDoc, updateDoc, deleteDoc,
-            where, getDocs, doc, writeBatch, setDoc, getDoc
-        };
-    </script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
         body {
             font-family: 'Inter', sans-serif;
-            background-color: #eef2f6;
+            background-color: #eef2f6; /* Light, clean background */
         }
+        /* Custom styles for status badges */
         .status-badge {
             display: inline-block;
             padding: 0.3rem 0.75rem;
@@ -37,107 +19,39 @@
             font-size: 0.85rem;
             font-weight: 600;
             text-align: center;
-            min-width: 80px;
+            min-width: 80px; /* Minimum width for consistency */
         }
+        /* Style for the main container shadow/lift */
         .dashboard-card {
             box-shadow: 0 10px 20px rgba(0, 0, 0, 0.05);
         }
-        .data-row {
-            transition: background-color 0.15s ease-in-out;
-            cursor: pointer; /* 클릭 가능한 행임을 표시 */
-        }
-        .data-row:not(.editing):hover {
-            opacity: 0.95;
-            background-color: #f0f4f8;
-        }
-        .history-row {
-            display: none;
-            background-color: #f7f9fb;
-            border-bottom: 2px solid #e2e8f0;
-        }
-        .history-list li {
-            padding: 0.5rem 0;
-            border-left: 3px solid #3b82f6;
-            padding-left: 1rem;
-            margin-bottom: 0.5rem;
-            background-color: #ffffff;
-            border-radius: 0.5rem;
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-        }
-        .edit-input, .edit-select {
-            border: 1px solid #ccc;
-            padding: 4px 8px;
-            border-radius: 6px;
-            font-size: 0.875rem;
-            width: 100%;
-            box-sizing: border-box;
-            background-color: white;
-        }
-        .data-action {
-             cursor: default;
-        }
-        .disabled-btn {
-            opacity: 0.5;
-            cursor: not-allowed;
-            box-shadow: none;
-        }
-        #loadingOverlay {
-            background-color: rgba(255, 255, 255, 0.8);
+        /* Overriding default Tailwind row hover to ensure colored rows look good */
+        .data-row:hover {
+            opacity: 0.9; /* Subtle darkening on hover */
         }
     </style>
 </head>
 <body class="p-4 sm:p-10 flex justify-center">
-    <!-- Loading Overlay -->
-    <div id="loadingOverlay" class="fixed inset-0 hidden z-50 flex items-center justify-center">
-        <div class="flex flex-col items-center p-6 bg-white rounded-lg shadow-xl">
-            <svg class="animate-spin -ml-1 mr-3 h-8 w-8 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-            <p class="mt-3 text-gray-700 font-semibold">데이터를 불러오는 중...</p>
-        </div>
-    </div>
-
     <div class="w-full lg:max-w-6xl bg-white rounded-2xl dashboard-card overflow-hidden">
         
         <!-- Header Section -->
-        <header class="p-6 sm:p-8 bg-white border-b border-gray-100 flex justify-between items-start flex-wrap gap-4">
-            <div>
-                <h1 class="text-3xl font-extrabold text-gray-800">부산CX센터 직원 LeoX ID 및 현황 대시보드</h1>
-                <p class="text-md text-gray-500 mt-2">직원 현황을 직접 수정하고 변경 이력을 관리해보세요. (아이디는 변경 불가)</p>
-                <!-- DB Status Indicator Added Here -->
-                <div id="dbStatusIndicator" class="mt-2 text-sm font-semibold flex items-center space-x-2">
-                    <span class="text-gray-500">DB 연결 상태:</span>
-                    <span id="statusText" class="text-yellow-600">확인 중...</span>
-                    <div id="statusIcon" class="w-3 h-3 rounded-full bg-yellow-500 animate-pulse"></div>
-                </div>
-            </div>
-            <!-- Control Buttons Group -->
-            <div class="flex flex-col sm:flex-row gap-3 flex-shrink-0">
-                <button id="addNewIdBtn" class="bg-teal-500 text-white font-bold py-2 px-4 rounded-lg shadow-none opacity-50 cursor-not-allowed transition duration-150 flex items-center justify-center space-x-2" disabled>
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 5a1 1 0 011 1v3h3a1 1 0 110 2h-3v3a1 1 0 11-2 0v-3H6a1 1 0 110-2h3V6a1 1 0 011-1z" clip-rule="evenodd" /></svg>
-                    <span>신규 ID 생성</span>
-                </button>
-                
-                <button id="toggleEditModeBtn" class="bg-red-500 text-white font-bold py-2 px-4 rounded-lg shadow-lg hover:bg-red-600 transition duration-150 flex items-center justify-center space-x-2">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 2a1 1 0 00-1 1v1h2V3a1 1 0 00-1-1zm5.66 4.34a1 1 0 011.414 0l1.414 1.414a1 1 0 010 1.414L10.414 17h-1.414l-1.414 1.414a1 1 0 01-1.414 0L4.34 17.414a1 1 0 010-1.414l7.95-7.95-1.414-1.414 1.414-1.414L15 6.414zM10 13a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd" /></svg>
-                    <span id="editModeStatus">수정 비활성화</span>
-                </button>
-            </div>
+        <header class="p-6 sm:p-8 bg-white border-b border-gray-100">
+            <h1 class="text-3xl font-extrabold text-gray-800">부산CX센터 직원 LeoX ID 및 현황 대시보드</h1>
+            <p class="text-md text-gray-500 mt-2">직원 아이디, 근무 여부 및 LeoX 시스템 상태 확인</p>
         </header>
 
         <!-- Filter Controls Section -->
         <div class="p-6 sm:p-8 border-b border-gray-100 bg-gray-50 flex flex-col md:flex-row gap-4 items-center">
             <h2 class="text-lg font-semibold text-gray-700 md:w-1/4">데이터 필터링</h2>
             <div class="flex flex-col sm:flex-row gap-4 w-full md:w-3/4">
-                <!-- Status Filter Buttons -->
-                <div id="statusFilterButtons" class="flex items-center gap-2 flex-grow flex-wrap">
-                    <label class="text-sm font-medium text-gray-700 whitespace-nowrap">근무:</label>
-                    <button data-status="전체" class="status-btn bg-blue-600 text-white font-semibold py-1 px-3 rounded-lg shadow-md transition duration-150">전체 보기</button>
-                    <button data-status="근무중" class="status-btn bg-gray-200 text-gray-700 hover:bg-gray-300 py-1 px-3 rounded-lg transition duration-150">🟢 근무중</button>
-                    <button data-status="퇴사" class="status-btn bg-gray-200 text-gray-700 hover:bg-gray-300 py-1 px-3 rounded-lg transition duration-150">🔴 퇴사</button>
-                    <button data-status="신청 없음" class="status-btn bg-gray-200 text-gray-700 hover:bg-gray-300 py-1 px-3 rounded-lg transition duration-150">⚫️ 신청 없음</button>
-                    <input type="hidden" id="statusFilter" value="전체"> 
+                <div class="flex items-center gap-2 flex-grow">
+                    <label for="statusFilter" class="text-sm font-medium text-gray-700 whitespace-nowrap">근무:</label>
+                    <select id="statusFilter" class="p-2 border border-gray-300 rounded-lg shadow-sm focus:ring-blue-500 focus:border-blue-500 transition duration-150 w-full">
+                        <option value="전체">전체 보기</option>
+                        <option value="근무중">🟢 근무중</option>
+                        <option value="퇴사">🔴 퇴사</option>
+                        <option value="신청 없음">⚫️ 신청 없음</option>
+                    </select>
                 </div>
                 <div class="flex-grow">
                     <input type="text" id="searchFilter" placeholder="이름 또는 ID로 검색..." class="p-2 border border-gray-300 rounded-lg shadow-sm focus:ring-blue-500 focus:border-blue-500 w-full transition duration-150">
@@ -150,321 +64,58 @@
             <table class="min-w-full divide-y divide-gray-200">
                 <thead class="bg-blue-50">
                     <tr>
-                        <th class="px-6 py-4 text-center text-xs font-bold text-blue-700 uppercase tracking-wider rounded-tl-xl">아이디</th>
-                        <th class="px-6 py-4 text-center text-xs font-bold text-blue-700 uppercase tracking-wider">이름</th>
+                        <th class="px-6 py-4 text-center text-xs font-bold text-blue-700 uppercase tracking-wider rounded-tl-xl">이름</th>
+                        <th class="px-6 py-4 text-center text-xs font-bold text-blue-700 uppercase tracking-wider">아이디</th>
                         <th class="px-6 py-4 text-center text-xs font-bold text-blue-700 uppercase tracking-wider">근무여부</th>
-                        <th class="px-6 py-4 text-center text-xs font-bold text-blue-700 uppercase tracking-wider">LeoX 상태</th>
-                        <th class="px-3 py-4 text-center text-xs font-bold text-blue-700 uppercase tracking-wider w-24">액션 / 이력</th>
+                        <th class="px-6 py-4 text-center text-xs font-bold text-blue-700 uppercase tracking-wider rounded-tr-xl">LeoX 상태</th>
                     </tr>
                 </thead>
+                <!-- JavaScript로 데이터가 동적으로 채워질 곳 -->
                 <tbody id="employeeTableBody" class="divide-y divide-gray-100">
-                    <!-- Dynamic Rows and History Rows will be inserted here -->
+                    <!-- Dynamic Rows will be inserted here -->
                 </tbody>
             </table>
-            <!-- 메시지 표시 공간 (검색 결과 없음, 데이터 로드 실패 등) -->
-            <div id="messageContainer" class="text-center p-8 text-lg text-gray-500">
-                데이터를 로드하는 중입니다...
-            </div>
         </div>
 
         <!-- Footer Section -->
         <footer class="p-6 text-sm text-gray-500 text-center border-t border-gray-100 bg-gray-50 rounded-b-2xl">
-            변경 이력 기능을 포함하여 Firestore로 데이터 영속성이 확보되었습니다.
+            GitHub Pages 배포를 위해 최적화된 현황판입니다.
         </footer>
     </div>
-    
-    <!-- Modals (Password & Delete - Unchanged from previous versions) -->
-    <div id="passwordModal" class="fixed inset-0 bg-gray-900 bg-opacity-75 hidden z-50 flex items-center justify-center transition-opacity duration-300">
-        <div class="bg-white p-8 rounded-xl shadow-2xl w-full max-w-sm">
-            <h3 class="text-xl font-bold mb-4 text-gray-800">수정 모드 활성화</h3>
-            <p class="text-gray-600 mb-4">비밀번호를 입력하여 수정 기능을 활성화하세요.</p>
-            <input type="password" id="passwordInput" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 mb-4 edit-input" placeholder="비밀번호 입력">
-            <div class="flex justify-end space-x-2">
-                <button id="cancelPasswordBtn" class="bg-gray-300 text-gray-800 font-semibold py-2 px-4 rounded-lg hover:bg-gray-400 transition duration-150">취소</button>
-                <button id="submitPasswordBtn" class="bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-700 transition duration-150">확인</button>
-            </div>
-            <p id="passwordError" class="text-red-500 text-sm mt-3 hidden">비밀번호가 올바르지 않습니다.</p>
-        </div>
-    </div>
-
-    <div id="deleteConfirmationModal" class="fixed inset-0 bg-gray-900 bg-opacity-75 hidden z-50 flex items-center justify-center transition-opacity duration-300">
-        <div class="bg-white p-6 rounded-xl shadow-2xl w-full max-w-xs">
-            <h3 class="text-lg font-bold mb-3 text-red-700">ID 삭제 확인</h3>
-            <p class="text-gray-600 mb-4 text-sm" id="deleteConfirmMessage"></p>
-            <div class="flex justify-end space-x-2">
-                <button id="cancelDeleteBtn" class="bg-gray-300 text-gray-800 font-semibold py-2 px-4 rounded-lg hover:bg-gray-400 transition duration-150 text-sm">취소</button>
-                <button id="confirmDeleteBtn" class="bg-red-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-red-700 transition duration-150 text-sm">삭제 실행</button>
-            </div>
-        </div>
-    </div>
-
 
     <script>
-        // --- Firebase Setup & State Management ---
-        let db, auth;
-        let employeeData = []; // 데이터베이스에서 가져온 데이터를 저장할 배열 
-        let isAuthReady = false;
-        
-        let editingId = null; 
-        let idToDelete = null; 
-        
-        const CORRECT_PASSWORD = 'leox1234'; 
-        let isEditModeEnabled = false; 
-        
-        const statusOptions = ['근무중', '퇴사', '신청 없음', '신규 등록'];
-        const leoxOptions = ['정상', '삭제', '미존재'];
-
-        const messageContainer = document.getElementById('messageContainer');
-        const statusTextElement = document.getElementById('statusText');
-        const statusIconElement = document.getElementById('statusIcon');
-        
-        /**
-         * DB 연결 상태 UI를 업데이트합니다.
-         * @param {string} status 'success', 'loading', 'error'
-         * @param {string} message 표시할 메시지
-         */
-        function updateDbStatusUI(status, message) {
-            statusTextElement.textContent = message;
-            statusIconElement.classList.remove('bg-yellow-500', 'bg-green-600', 'bg-red-600', 'animate-pulse');
-            statusIconElement.classList.add('w-3', 'h-3'); // 크기 초기화
-
-            switch (status) {
-                case 'success':
-                    statusTextElement.classList.remove('text-yellow-600', 'text-red-600');
-                    statusTextElement.classList.add('text-green-600');
-                    statusIconElement.classList.add('bg-green-600');
-                    break;
-                case 'error':
-                    statusTextElement.classList.remove('text-yellow-600', 'text-green-600');
-                    statusTextElement.classList.add('text-red-600');
-                    statusIconElement.classList.add('bg-red-600');
-                    break;
-                case 'loading':
-                default:
-                    statusTextElement.classList.remove('text-green-600', 'text-red-600');
-                    statusTextElement.classList.add('text-yellow-600');
-                    statusIconElement.classList.add('bg-yellow-500', 'animate-pulse');
-                    break;
-            }
-        }
-        
-        /**
-         * Firebase 및 Auth를 초기화하고 데이터 로드를 시작합니다.
-         */
-        async function initializeFirebase() {
-            updateDbStatusUI('loading', '연결 확인 중...');
-            
-            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-            const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-            const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-            
-            const { initializeApp, getAuth, signInWithCustomToken, signInAnonymously, getFirestore, collection, onSnapshot } = window.firebase;
-
-            if (Object.keys(firebaseConfig).length === 0) {
-                console.error("Firebase 설정이 제공되지 않았습니다. 데이터를 저장할 수 없습니다.");
-                updateDbStatusUI('error', '🔴 연결 실패: 설정 없음');
-                messageContainer.innerHTML = '<p class="text-red-600 font-bold">⚠️ Firebase 설정 데이터가 없어 연결할 수 없습니다.</p>';
-                hideLoading();
-                return;
-            }
-
-            try {
-                const app = initializeApp(firebaseConfig);
-                db = getFirestore(app);
-                auth = getAuth(app);
-                
-                const COLLECTION_PATH = `artifacts/${appId}/public/data/employees`;
-                
-                // 1. 인증 처리
-                if (initialAuthToken) {
-                    await signInWithCustomToken(auth, initialAuthToken);
-                } else {
-                    await signInAnonymously(auth);
-                }
-                isAuthReady = true;
-                updateDbStatusUI('success', '🟢 연결 성공');
-                console.log("Firebase 인증 성공.");
-                
-                // 2. 실시간 데이터 리스너 설정
-                const q = collection(db, COLLECTION_PATH);
-                onSnapshot(q, (snapshot) => {
-                    const newEmployeeData = [];
-                    snapshot.forEach(doc => {
-                        const data = doc.data();
-                        newEmployeeData.push({ 
-                            ...data, 
-                            docId: doc.id, 
-                            leoxId: data.leoxId 
-                        });
-                    });
-                    employeeData = newEmployeeData;
-                    console.log(`Firestore에서 ${employeeData.length}개의 데이터 업데이트됨.`);
-                    
-                    if (employeeData.length === 0) {
-                        // 데이터가 없으면 초기 데이터 시드 시도 (사용자 요청 목록으로 업데이트됨)
-                        seedInitialData(db, COLLECTION_PATH);
-                    }
-                    
-                    filterTable(); 
-                    hideLoading();
-
-                }, (error) => {
-                    console.error("Firestore 데이터 로드 중 오류:", error);
-                    updateDbStatusUI('error', '🔴 데이터 로드 실패');
-                    messageContainer.innerHTML = '<p class="text-red-600 font-bold">⚠️ 데이터베이스에서 데이터를 불러오는 데 실패했습니다. 권한 문제일 수 있습니다.</p>';
-                    hideLoading();
-                });
-
-            } catch (error) {
-                console.error("Firebase 초기화 또는 인증 실패:", error);
-                updateDbStatusUI('error', '🔴 연결 실패: 인증 오류');
-                messageContainer.innerHTML = '<p class="text-red-600 font-bold">⚠️ Firebase 인증에 실패했습니다. (콘솔 로그 확인)</p>';
-                hideLoading();
-            }
-        }
-        
-        /**
-         * 초기 데이터 시뮬레이션 및 Firestore에 저장 (데이터가 0개일 때만 실행)
-         * 사용자 요청 데이터를 반영하여 업데이트되었습니다.
-         */
-        async function seedInitialData(db, COLLECTION_PATH) {
-            // 이 함수는 onSnapshot이 데이터를 0개로 보고했을 때만 호출되어야 합니다.
-            if (employeeData.length > 0) return; 
-
-            // 사용자가 제공한 목록 (id를 leoxId로 변경하여 사용)
-            const initialEmployees = [
-                { name: "김윤지", leoxId: "busan001", status: "근무중", leoxStatus: "정상" },
-                { name: "이정하", leoxId: "busan002", status: "퇴사", leoxStatus: "삭제" },
-                { name: "변정인", leoxId: "busan003", status: "근무중", leoxStatus: "정상" },
-                { name: "노미라", leoxId: "busan004", status: "근무중", leoxStatus: "정상" },
-                { name: "강이은", leoxId: "busan005", status: "퇴사", leoxStatus: "삭제" },
-                { name: "한정임", leoxId: "busan006", status: "퇴사", leoxStatus: "삭제" },
-                { name: "김나현", leoxId: "busan007", status: "근무중", leoxStatus: "정상" },
-                { name: "유지윤", leoxId: "busan008", status: "퇴사", leoxStatus: "삭제" },
-                { name: "없음", leoxId: "busan009", status: "신청 없음", leoxStatus: "미존재" },
-                { name: "박영웅", leoxId: "busan010", status: "퇴사", leoxStatus: "삭제" },
-                { name: "한정임", leoxId: "busan011", status: "퇴사", leoxStatus: "삭제" },
-                { name: "유지윤", leoxId: "busan012", status: "근무중", leoxStatus: "정상" },
-                { name: "오재용", leoxId: "busan013", status: "퇴사", leoxStatus: "삭제" },
-                { name: "최현진", leoxId: "busan014", status: "근무중", leoxStatus: "정상" },
-                // busan015: 박혜민 -> 조혜륜 변경 이력 및 최종 상태 반영
-                { 
-                    name: "조혜륜", 
-                    leoxId: "busan015", 
-                    status: "신규 등록", 
-                    leoxStatus: "정상", 
-                    history: [
-                        {
-                            date: "2025-12-02",
-                            type: "직원 이름 및 상태 변경 (조혜륜)",
-                            details: "조혜륜님의 현황이 업데이트되었습니다. (3개 필드 변경됨. 대시보드 수정 기능 사용)",
-                            changes: {
-                                name: { from: "박혜민", to: "조혜륜" },
-                                status: { from: "퇴사", to: "신규 등록" },
-                                leoxStatus: { from: "삭제", to: "정상" }
-                            }
-                        },
-                        { 
-                            date: "2024-01-01", // 이전 데이터의 최초 생성일로 가정
-                            type: "최초 생성 (박혜민, 퇴사, 삭제)", 
-                            details: "사용자 요청에 따라 이전 데이터(박혜민, 퇴사, 삭제)로 초기 등록됨." 
-                        }
-                    ]
-                },
-                { name: "허다영", leoxId: "busan016", status: "근무중", leoxStatus: "정상" },
-                { name: "박다은", leoxId: "busan017", status: "근무중", leoxStatus: "정상" },
-                { name: "없음", leoxId: "busan018", status: "신청 없음", leoxStatus: "미존재" },
-                { name: "없음", leoxId: "busan019", status: "신청 없음", leoxStatus: "미존재" },
-                { name: "없음", leoxId: "busan020", status: "신청 없음", leoxStatus: "미존재" },
-                { name: "없음", leoxId: "busan021", status: "신청 없음", leoxStatus: "미존재" },
-                { name: "고성자", leoxId: "busan022", status: "근무중", leoxStatus: "정상" },
-                { name: "이수진", leoxId: "busan023", status: "근무중", leoxStatus: "정상" },
-            ];
-
-            // 모든 항목에 초기 이력 추가 (history가 없는 경우에만 추가)
-            const seededEmployees = initialEmployees.map(emp => {
-                if (emp.history && emp.history.length > 0) {
-                    return emp; // 이미 이력이 있는 경우 (busan015)는 건너뜁니다.
-                }
-
-                // 이력이 없는 경우에만 기본 이력을 추가합니다.
-                return {
-                    ...emp,
-                    history: [{ 
-                        date: new Date().toISOString().substring(0, 10), 
-                        type: "최초 생성 (요청 데이터)", 
-                        details: "사용자 요청에 따라 초기 데이터로 등록됨." 
-                    }]
-                };
-            });
-            
-            const { collection, addDoc } = window.firebase;
-
-            console.log("초기 데이터가 없어 시뮬레이션 데이터로 Firestore를 채웁니다...");
-            messageContainer.innerHTML = '<p class="text-blue-600 font-bold">데이터베이스에 데이터가 없어 샘플 데이터를 생성 중입니다...</p>';
-            
-            const batch = window.firebase.writeBatch(db);
-            
-            for (const employee of seededEmployees) {
-                 const newDocRef = window.firebase.doc(collection(db, COLLECTION_PATH));
-                 batch.set(newDocRef, employee);
-            }
-            
-            try {
-                await batch.commit();
-                console.log("시뮬레이션 데이터 일괄 저장 성공.");
-            } catch (e) {
-                console.error("시뮬레이션 데이터 저장 실패:", e);
-                messageContainer.innerHTML = '<p class="text-red-600 font-bold">⚠️ 샘플 데이터 생성에 실패했습니다. (콘솔 로그 확인)</p>';
-            }
-            // onSnapshot 리스너가 새 데이터를 자동으로 가져와 테이블을 업데이트할 것입니다.
-        }
-
-        // --- 로딩 및 메시지 처리 ---
-        function showLoading() {
-            document.getElementById('loadingOverlay').classList.remove('hidden');
-        }
-
-        function hideLoading() {
-            document.getElementById('loadingOverlay').classList.add('hidden');
-        }
+        // 직원 데이터 배열 (이 데이터를 수정하여 테이블 내용을 변경하세요)
+        const employeeData = [
+            { name: "김윤지", id: "busan001", status: "근무중", leoxStatus: "정상" },
+            { name: "이정하", id: "busan002", status: "퇴사", leoxStatus: "삭제" },
+            { name: "변정인", id: "busan003", status: "근무중", leoxStatus: "정상" },
+            { name: "노미라", id: "busan004", status: "근무중", leoxStatus: "정상" },
+            { name: "강이은", id: "busan005", status: "퇴사", leoxStatus: "삭제" },
+            { name: "한정임", id: "busan006", status: "퇴사", leoxStatus: "삭제" },
+            { name: "박영웅", id: "busan007", status: "퇴사", leoxStatus: "삭제" },
+            { name: "유지윤", id: "busan008", status: "퇴사", leoxStatus: "삭제" },
+            { name: "없음", id: "busan009", status: "신청 없음", leoxStatus: "미존재" },
+            { name: "박영웅", id: "busan010", status: "퇴사", leoxStatus: "삭제" },
+            { name: "한정임", id: "busan011", status: "퇴사", leoxStatus: "삭제" },
+            { name: "유지윤", id: "busan012", status: "근무중", leoxStatus: "정상" },
+            { name: "오재용", id: "busan013", status: "퇴사", leoxStatus: "삭제" },
+            { name: "최현진", id: "busan014", status: "근무중", leoxStatus: "정상" },
+            { name: "박혜민", id: "busan015", status: "퇴사", leoxStatus: "삭제" },
+            { name: "허다영", id: "busan016", status: "근무중", leoxStatus: "정상" },
+            { name: "박다은", id: "busan017", status: "근무중", leoxStatus: "정상" },
+            { name: "없음", id: "busan018", status: "신청 없음", leoxStatus: "미존재" },
+            { name: "없음", id: "busan019", status: "신청 없음", leoxStatus: "미존재" },
+            { name: "없음", id: "busan020", status: "신청 없음", leoxStatus: "미존재" },
+            { name: "없음", id: "busan021", status: "신청 없음", leoxStatus: "미존재" },
+            { name: "고성자", id: "busan022", status: "근무중", leoxStatus: "정상" },
+            { name: "이수진", id: "busan023", status: "근무중", leoxStatus: "정상" },
+        ];
 
         /**
-         * 테이블 본문을 숨기고 메시지를 표시하거나, 메시지를 숨기고 테이블을 표시합니다.
+         * 상태 텍스트에 따라 기본 색상 그룹을 반환합니다.
+         * @param {string} statusText - 상태 텍스트.
+         * @returns {string} 'green', 'red', 'gray' 중 하나.
          */
-        function displayMessage(type, text) {
-            const tbody = document.getElementById('employeeTableBody');
-            const container = document.getElementById('messageContainer');
-
-            if (type === 'none') {
-                container.classList.add('hidden');
-                tbody.style.display = 'table-row-group';
-                return;
-            }
-
-            tbody.style.display = 'none';
-            container.classList.remove('hidden');
-            
-            let color = 'text-gray-500';
-            let prefix = '';
-            if (type === 'error') {
-                color = 'text-red-600';
-                prefix = '⚠️ 오류: ';
-            } else if (type === 'info') {
-                color = 'text-blue-600';
-                prefix = 'ℹ️ 정보: ';
-            } else if (type === 'noresults') {
-                color = 'text-gray-500';
-                prefix = '🔍 ';
-            }
-            
-            container.className = `text-center p-8 text-lg ${color}`;
-            container.innerHTML = `<p class="font-bold">${prefix}${text}</p>`;
-        }
-
-
-        // --- UI 업데이트 및 액션 함수 (생략된 부분은 변경 없음) ---
-
         function getStatusGroup(statusText) {
             switch (statusText) {
                 case '근무중':
@@ -472,11 +123,7 @@
                     return 'green';
                 case '퇴사':
                 case '삭제':
-                case '휴직':
-                case '일시 정지':
                     return 'red';
-                case '신규 등록':
-                    return 'yellow'; 
                 case '신청 없음':
                 case '미존재':
                 default:
@@ -484,662 +131,135 @@
             }
         }
 
+        /**
+         * 상태 그룹에 따라 뱃지와 행 배경색 클래스를 반환합니다.
+         * @param {string} statusGroup - 'green', 'red', 'gray' 중 하나.
+         * @returns {{badgeBg: string, badgeText: string, rowBg: string}} Tailwind CSS 클래스 객체.
+         */
         function getStatusClasses(statusGroup) {
             switch (statusGroup) {
-                case 'green': 
-                    return { badgeBg: 'bg-blue-200', badgeText: 'text-blue-800', rowBg: 'bg-blue-50/70', hoverBg: 'hover:bg-blue-100' };
-                case 'red': 
-                    return { badgeBg: 'bg-red-200', badgeText: 'text-red-700', rowBg: 'bg-red-100/70', hoverBg: 'hover:bg-red-200' };
-                case 'yellow': 
-                    return { badgeBg: 'bg-yellow-200', badgeText: 'text-yellow-800', rowBg: 'bg-yellow-50/70', hoverBg: 'hover:bg-yellow-100' };
-                case 'gray': 
+                case 'green':
+                    return { 
+                        badgeBg: 'bg-green-100', 
+                        badgeText: 'text-green-700', 
+                        rowBg: 'bg-green-50' // 행 배경색: 연한 녹색
+                    };
+                case 'red':
+                    return { 
+                        badgeBg: 'bg-red-100', 
+                        badgeText: 'text-red-700', 
+                        rowBg: 'bg-red-50'   // 행 배경색: 연한 붉은색
+                    };
+                case 'gray':
                 default:
-                    return { badgeBg: 'bg-gray-200', badgeText: 'text-gray-600', rowBg: 'bg-gray-50/70', hoverBg: 'hover:bg-gray-100' };
+                    return { 
+                        badgeBg: 'bg-gray-200', 
+                        badgeText: 'text-gray-600', 
+                        rowBg: 'bg-white' // 회색은 행 배경을 흰색으로 유지하여 깔끔하게 처리
+                    };
             }
         }
 
+        /**
+         * 상태 텍스트로 뱃지 HTML을 생성합니다.
+         * @param {string} statusText - 상태 텍스트.
+         * @returns {string} 뱃지 HTML 문자열.
+         */
         function createStatusBadge(statusText) {
             const statusGroup = getStatusGroup(statusText);
             const { badgeBg, badgeText } = getStatusClasses(statusGroup);
             return `<span class="status-badge ${badgeBg} ${badgeText}">${statusText}</span>`;
         }
 
-        function highlightNameInHistoryType(typeString) {
-            const colorClass = 'text-red-600 font-bold';
-            let result = typeString;
-            result = result.replace(
-                /([가-힣]+)(님)/g, 
-                (match, name, suffix) => `<span class="${colorClass}">${name}</span>${suffix}`
-            );
-            result = result.replace(
-                /\((.*?)\)/g, 
-                (match) => {
-                    return match.replace(
-                        /([가-힣]+)/g, 
-                        (nameMatch) => `<span class="${colorClass}">${nameMatch}</span>`
-                    );
-                }
-            );
-            
-            return result;
-        }
-
-        function createHistoryDetails(history) {
-            if (!history || history.length === 0) {
-                return '<p class="text-gray-500 italic p-4">등록된 변경 이력이 없습니다.</p>';
-            }
-            const sortedHistory = [...history].sort((a, b) => new Date(b.date) - new Date(a.date));
-            const listItems = sortedHistory.map(item => {
-                let detailsHtml = '';
-                if (item.changes) {
-                    detailsHtml = '<div class="mt-2 text-sm text-gray-700 space-y-1 bg-gray-50 p-3 rounded-lg border border-gray-200">';
-                    detailsHtml += '<p class="font-bold text-blue-700">주요 변경 사항:</p>';
-                    const fieldMap = { leoxId: '아이디', name: '이름', status: '근무여부', leoxStatus: 'LeoX 상태' };
-                    Object.keys(item.changes).forEach(field => {
-                        const fieldName = fieldMap[field] || field;
-                        const change = item.changes[field];
-                        detailsHtml += `<p><span class="font-semibold">${fieldName}:</span> <span class="text-red-500">${change.from}</span> &rarr; <span class="text-green-600 font-bold">${change.to}</span></p>`;
-                    });
-                    detailsHtml += '</div>';
-                }
-                detailsHtml += `<p class="text-sm text-gray-600 mt-2">${item.details}</p>`;
-                const highlightedType = highlightNameInHistoryType(item.type);
-                return `
-                    <li class="p-3">
-                        <div class="flex justify-between items-center mb-2">
-                            <span class="font-semibold text-gray-800">${highlightedType}</span>
-                            <span class="text-xs text-gray-500">${item.date}</span>
-                        </div>
-                        ${detailsHtml}
-                    </li>
-                `;
-            }).join('');
-            return `
-                <div class="p-6">
-                    <h4 class="text-lg font-bold mb-4 text-blue-800 border-b pb-2">변경 이력 (${history.length}건)</h4>
-                    <ul class="space-y-4 history-list">
-                        ${listItems}
-                    </ul>
-                </div>
-            `;
-        }
-
-        function updateEditModeUI() {
-            const toggleBtn = document.getElementById('toggleEditModeBtn');
-            const statusSpan = document.getElementById('editModeStatus');
-            const newIdBtn = document.getElementById('addNewIdBtn'); 
-            
-            if (isEditModeEnabled) {
-                statusSpan.textContent = '수정 활성화 (클릭하여 비활성화)';
-                toggleBtn.classList.remove('bg-red-500', 'hover:bg-red-600');
-                toggleBtn.classList.add('bg-green-600', 'hover:bg-green-700');
-                
-                newIdBtn.disabled = false;
-                newIdBtn.classList.remove('disabled-btn', 'opacity-50', 'cursor-not-allowed', 'shadow-none');
-                newIdBtn.classList.add('shadow-lg', 'hover:bg-teal-600');
-
-            } else {
-                statusSpan.textContent = '수정 비활성화';
-                toggleBtn.classList.remove('bg-green-600', 'hover:bg-green-700');
-                toggleBtn.classList.add('bg-red-500', 'hover:bg-red-600');
-
-                newIdBtn.disabled = true;
-                newIdBtn.classList.add('disabled-btn', 'opacity-50', 'cursor-not-allowed', 'shadow-none');
-                newIdBtn.classList.remove('shadow-lg', 'hover:bg-teal-600');
-            }
-        }
-        
-        function showPasswordModal() {
-            document.getElementById('passwordModal').classList.remove('hidden');
-            document.getElementById('passwordInput').value = '';
-            document.getElementById('passwordError').classList.add('hidden');
-            document.getElementById('passwordInput').focus();
-        }
-
-        function hidePasswordModal() {
-            document.getElementById('passwordModal').classList.add('hidden');
-        }
-        
-        function checkPasswordAndActivate(password) {
-            if (password === CORRECT_PASSWORD) {
-                isEditModeEnabled = true;
-                hidePasswordModal();
-                updateEditModeUI();
-                filterTable(); 
-                console.log("수정 모드가 성공적으로 활성화되었습니다.");
-            } else {
-                document.getElementById('passwordError').classList.remove('hidden');
-                document.getElementById('passwordInput').value = '';
-                document.getElementById('passwordInput').focus();
-            }
-        }
-        
-        function toggleEditModeActivation() {
-            if (isEditModeEnabled) {
-                isEditModeEnabled = false;
-                updateEditModeUI();
-                filterTable();
-                console.log("수정 모드가 비활성화되었습니다.");
-            } else {
-                showPasswordModal();
-            }
-        }
-
-        function getNextEmployeeId() {
-            let maxNum = 0;
-            employeeData.forEach(data => {
-                const match = data.leoxId.match(/^busan(\d+)$/);
-                if (match) {
-                    const num = parseInt(match[1], 10);
-                    if (num > maxNum) {
-                        maxNum = num;
-                    }
-                }
-            });
-
-            const nextNum = maxNum + 1;
-            const nextIdSuffix = String(nextNum).padStart(3, '0');
-            return `busan${nextIdSuffix}`;
-        }
-
-        async function addNewEmployee() {
-            if (!isEditModeEnabled || !isAuthReady) {
-                console.error("수정 모드가 비활성화되었거나 데이터베이스가 준비되지 않았습니다.");
-                return;
-            }
-
-            showLoading();
-
-            const newId = getNextEmployeeId();
-            const newEmployeeData = {
-                leoxId: newId,
-                name: "신규 등록",
-                status: "신규 등록", 
-                leoxStatus: "미존재",
-                history: [{ date: new Date().toISOString().substring(0, 10), type: "신규 ID 생성", details: `ID ${newId}가 생성되었으며, 기본 값으로 등록되었습니다.` }]
-            };
-            
-            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-            const COLLECTION_PATH = `artifacts/${appId}/public/data/employees`;
-
-            try {
-                const { collection, addDoc } = window.firebase;
-                const docRef = await addDoc(collection(db, COLLECTION_PATH), newEmployeeData);
-                console.log(`신규 ID ${newId} (Doc ID: ${docRef.id})가 데이터베이스에 추가되었습니다.`);
-                
-                setTimeout(() => {
-                    // 새 행이 onSnapshot을 통해 로드된 후 편집 모드를 토글합니다.
-                    const newRow = document.querySelector(`.data-row[data-leox-id="${newId}"]`);
-                    if (newRow) {
-                        toggleEditMode(null, newRow.getAttribute('data-doc-id'));
-                    }
-                }, 500); 
-
-            } catch (error) {
-                console.error("신규 직원 추가 중 오류 발생:", error);
-            } finally {
-                hideLoading();
-            }
-        }
-
-        function confirmAndDelete(event, docId, employeeName, leoxId) {
-            if (event) event.stopPropagation();
-
-            if (!isEditModeEnabled || !isAuthReady) {
-                console.error("수정 모드가 비활성화되었거나 데이터베이스가 준비되지 않았습니다.");
-                return;
-            }
-
-            idToDelete = docId;
-            
-            const msgElement = document.getElementById('deleteConfirmMessage');
-            msgElement.innerHTML = `정말 <span class="font-bold text-red-500">${employeeName}</span> 님의 ID <span class="font-bold">${leoxId}</span> 를 <span class="font-extrabold">영구적으로 삭제</span>하시겠습니까? 이 작업은 되돌릴 수 없습니다.`;
-            
-            document.getElementById('deleteConfirmationModal').classList.remove('hidden');
-        }
-
-        async function deleteEmployee() {
-            if (!idToDelete || !isAuthReady) return;
-
-            showLoading();
-            
-            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-            const COLLECTION_PATH = `artifacts/${appId}/public/data/employees`;
-            
-            const { doc, deleteDoc } = window.firebase;
-
-            try {
-                const docRef = doc(db, COLLECTION_PATH, idToDelete);
-                await deleteDoc(docRef);
-
-                console.log(`Doc ID ${idToDelete} 삭제 완료.`);
-            } catch (error) {
-                console.error(`Doc ID ${idToDelete} 삭제 중 오류 발생:`, error);
-            } finally {
-                document.getElementById('deleteConfirmationModal').classList.add('hidden');
-                idToDelete = null;
-                hideLoading();
-            }
-        }
-
-
-        function updateStatusButtonStyles(selectedStatus) {
-            document.querySelectorAll('.status-btn').forEach(btn => {
-                if (btn.getAttribute('data-status') === selectedStatus) {
-                    btn.classList.remove('bg-gray-200', 'text-gray-700', 'hover:bg-gray-300', 'shadow-none');
-                    btn.classList.add('bg-blue-600', 'text-white', 'shadow-md');
-                } else {
-                    btn.classList.remove('bg-blue-600', 'text-white', 'shadow-md');
-                    btn.classList.add('bg-gray-200', 'text-gray-700', 'hover:bg-gray-300', 'shadow-none');
-                }
-            });
-        }
-        
-        function renderTable(dataToRender = employeeData) {
+        /**
+         * 모든 직원 데이터를 기반으로 테이블 본문을 렌더링합니다.
+         */
+        function renderTable() {
             const tbody = document.getElementById('employeeTableBody');
-            
-            dataToRender.sort((a, b) => a.leoxId.localeCompare(b.leoxId));
+            if (!tbody) return;
 
-            if (dataToRender.length === 0) {
-                tbody.innerHTML = '';
-                // 데이터는 있지만 필터링 결과가 없는 경우 vs. 데이터 로드 실패/데이터 자체가 없는 경우
-                if (employeeData.length > 0) {
-                    displayMessage('noresults', '검색 조건에 맞는 데이터가 없습니다.');
-                } else if (statusTextElement.textContent.includes('연결 성공')) {
-                    displayMessage('info', '데이터베이스에 직원 정보가 없습니다. "신규 ID 생성" 버튼을 클릭하여 시작하거나 기본 데이터를 로드하세요.');
-                }
-                return;
-            }
-
-            displayMessage('none', '');
-            
-            const htmlContent = dataToRender.map(data => {
+            // 데이터 배열을 순회하며 HTML 문자열 생성
+            const htmlContent = employeeData.map(data => {
                 const statusGroup = getStatusGroup(data.status);
-                const { rowBg, hoverBg } = getStatusClasses(statusGroup); 
-                const hasHistory = data.history && data.history.length > 0;
+                const { rowBg } = getStatusClasses(statusGroup);
                 
-                const isEditing = data.docId === editingId;
-
-                let actionContent = '';
-                if (isEditing) {
-                    actionContent = `
-                        <div class="flex flex-col space-y-1">
-                            <button onclick="saveChanges(event, '${data.docId}')" class="text-xs font-bold py-1 px-2 rounded-md bg-green-500 text-white hover:bg-green-600 transition duration-150 shadow-md">저장</button>
-                            <button onclick="cancelEdit(event, '${data.docId}')" class="text-xs font-bold py-1 px-2 rounded-md bg-red-500 text-white hover:bg-red-600 transition duration-150 shadow-md">취소</button>
-                        </div>
-                    `;
-                } else {
-                    const toggleIcon = hasHistory ? '<svg class="w-4 h-4 text-gray-500 toggle-icon transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>' : '<span class="text-gray-400">-</span>';
-                    
-                    let editButtonHtml = '';
-                    let deleteButtonHtml = '';
-
-                    if (isEditModeEnabled) {
-                        editButtonHtml = `<button onclick="toggleEditMode(event, '${data.docId}')" class="text-xs font-bold py-1 px-2 rounded-md bg-blue-500 text-white hover:bg-blue-600 transition duration-150 shadow-md">수정</button>`;
-                        deleteButtonHtml = `<button onclick="confirmAndDelete(event, '${data.docId}', '${data.name}', '${data.leoxId}')" class="text-xs font-bold py-1 px-2 rounded-md bg-red-500 text-white hover:bg-red-600 transition duration-150 shadow-md">삭제</button>`;
-                    }
-                    
-                    if (isEditModeEnabled) {
-                        actionContent = `
-                            <div class="flex flex-col space-y-1 items-center">
-                                <div class="flex space-x-1 w-full justify-center">
-                                    ${editButtonHtml}
-                                    ${deleteButtonHtml}
-                                </div>
-                                ${hasHistory ? `<div class="mt-1">${toggleIcon}</div>` : ''}
-                            </div>
-                        `;
-                    } else if (!isEditModeEnabled && hasHistory) {
-                        actionContent = `
-                            <div class="flex items-center justify-center space-x-2">
-                                ${toggleIcon}
-                            </div>
-                        `;
-                    } else { 
-                        actionContent = `<span class="text-gray-400">-</span>`;
-                    }
-                }
-                
-                const statusSelectOptions = statusOptions.map(opt => 
-                    `<option value="${opt}" ${data.status === opt ? 'selected' : ''}>${opt}</option>`
-                ).join('');
-
-                const leoxSelectOptions = leoxOptions.map(opt => 
-                    `<option value="${opt}" ${data.leoxStatus === opt ? 'selected' : ''}>${opt}</option>`
-                ).join('');
-
-
-                const mainRow = `
-                    <tr class="data-row ${isEditing ? 'editing bg-yellow-100 hover:bg-yellow-100' : rowBg + ' ' + hoverBg}" data-doc-id="${data.docId}" data-leox-id="${data.leoxId}" data-status="${data.status}" data-leox-status="${data.leoxStatus}" data-name="${data.name}" onclick="handleActionOrHistory(event, '${data.docId}', ${hasHistory})">
-                        <!-- 아이디 (편집 불가) -->
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 text-center font-semibold">${data.leoxId}</td>
-                        
-                        <!-- 이름 (편집 가능) -->
-                        <td class="px-6 py-4 whitespace-nowrap text-center" data-field="name">
-                            <span class="display-value ${isEditing ? 'hidden' : ''}">${data.name}</span>
-                            <input type="text" value="${data.name}" class="edit-input ${isEditing ? '' : 'hidden'}" data-old-value="${data.name}">
+                return `
+                    <tr class="data-row ${rowBg} hover:bg-opacity-80 transition duration-150" 
+                        data-status="${data.status}" 
+                        data-leox-status="${data.leoxStatus}" 
+                        data-id="${data.id}" 
+                        data-name="${data.name}">
+                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 text-center">${data.name}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 text-center">${data.id}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-center">
+                            ${createStatusBadge(data.status)}
                         </td>
-                        
-                        <!-- 근무여부 (편집 가능) -->
-                        <td class="px-6 py-4 whitespace-nowrap text-center" data-field="status">
-                            <span class="display-value ${isEditing ? 'hidden' : ''}">${createStatusBadge(data.status)}</span>
-                            <select class="edit-select ${isEditing ? '' : 'hidden'}" data-old-value="${data.status}" data-field-name="status">
-                                ${statusSelectOptions}
-                            </select>
-                        </td>
-                        
-                        <!-- LeoX 상태 (편집 가능) -->
-                        <td class="px-6 py-4 whitespace-nowrap text-center" data-field="leoxStatus">
-                            <span class="display-value ${isEditing ? 'hidden' : ''}">${createStatusBadge(data.leoxStatus)}</span>
-                            <select class="edit-select ${isEditing ? '' : 'hidden'}" data-old-value="${data.leoxStatus}" data-field-name="leoxStatus">
-                                ${leoxSelectOptions}
-                            </select>
-                        </td>
-                        
-                        <!-- 액션/이력 버튼 및 아이콘 -->
-                        <td class="px-3 py-4 text-center data-action">
-                            ${actionContent}
+                        <td class="px-6 py-4 whitespace-nowrap text-center">
+                            ${createStatusBadge(data.leoxStatus)}
                         </td>
                     </tr>
                 `;
-
-                const historyRow = `
-                    <tr class="history-row" data-history-id="${data.docId}">
-                        <td colspan="5" class="p-0 border-b border-gray-200">
-                            <div class="overflow-hidden transition-all duration-300 ease-in-out max-h-0">
-                                ${createHistoryDetails(data.history)}
-                            </div>
-                        </td>
-                    </tr>
-                `;
-
-                return mainRow + historyRow;
             }).join('');
 
             tbody.innerHTML = htmlContent;
         }
 
-        function handleActionOrHistory(event, docId, hasHistory) {
-            if (editingId) return;
+        document.addEventListener('DOMContentLoaded', () => {
+            // 테이블 렌더링을 먼저 수행합니다.
+            renderTable();
 
-            if (event && event.target.closest('button')) {
-                return;
-            }
+            const statusFilter = document.getElementById('statusFilter');
+            const searchFilter = document.getElementById('searchFilter');
             
-            if (!hasHistory) return;
-
-            const row = document.querySelector(`.data-row[data-doc-id="${docId}"]`);
-            const historyIcon = row ? row.querySelector('.toggle-icon') : null;
-            if (row && historyIcon) {
-                toggleHistoryDetails(docId, row, historyIcon);
-            }
-        }
-
-        function toggleHistoryDetails(docId, row, icon) {
-            const tbody = document.getElementById('employeeTableBody');
-            const historyRow = tbody.querySelector(`tr[data-history-id="${docId}"]`);
-            if (!historyRow) return;
-
-            const detailContent = historyRow.querySelector('div');
-            const isCurrentlyOpen = historyRow.style.display === 'table-row';
-            
-            const statusGroup = row.getAttribute('data-status') ? getStatusGroup(row.getAttribute('data-status')) : 'gray';
-            const { rowBg } = getStatusClasses(statusGroup);
+            // 렌더링 후, 모든 행 요소를 다시 선택합니다.
+            let rows = document.querySelectorAll('.data-row');
 
 
-            tbody.querySelectorAll('.history-row').forEach(tr => {
-                const relatedDocId = tr.getAttribute('data-history-id');
-                const relatedRow = tbody.querySelector(`.data-row[data-doc-id="${relatedDocId}"]`);
-                const relatedIcon = relatedRow ? relatedRow.querySelector('.toggle-icon') : null;
-                
-                const relatedStatusGroup = relatedRow.getAttribute('data-status') ? getStatusGroup(relatedRow.getAttribute('data-status')) : 'gray';
-                const { rowBg: relatedRowBg } = getStatusClasses(relatedStatusGroup); 
+            /**
+             * 테이블의 행을 현재 필터 조건에 맞게 표시하거나 숨깁니다.
+             */
+            const filterTable = () => {
+                // 필터링 전에, 동적으로 생성된 행 요소를 다시 가져옵니다.
+                rows = document.querySelectorAll('.data-row');
 
-                if (tr.style.display === 'table-row') {
-                    tr.style.display = 'none';
-                    tr.querySelector('div').style.maxHeight = '0';
-                    if (relatedRow && !relatedRow.classList.contains('editing')) {
-                         relatedRow.classList.remove('bg-blue-100');
-                         relatedRow.classList.add(relatedRowBg);
+                const selectedStatus = statusFilter.value;
+                const searchQuery = searchFilter.value.toLowerCase().trim();
+
+                rows.forEach(row => {
+                    const rowStatus = row.getAttribute('data-status');
+                    const rowId = row.getAttribute('data-id').toLowerCase();
+                    const rowName = row.getAttribute('data-name').toLowerCase();
+
+                    // 1. 근무여부 필터 검사
+                    const statusMatch = (selectedStatus === '전체' || rowStatus === selectedStatus);
+
+                    // 2. 검색어 필터 검사 (이름 또는 ID에 검색어 포함)
+                    const searchMatch = (
+                        searchQuery === '' || 
+                        rowName.includes(searchQuery) || 
+                        rowId.includes(searchQuery)
+                    );
+
+                    // 두 조건 모두 만족하면 표시
+                    if (statusMatch && searchMatch) {
+                        row.style.display = '';
+                    } else {
+                        row.style.display = 'none';
                     }
-                    if (relatedIcon) relatedIcon.style.transform = 'rotate(0deg)';
-                }
-            });
-            
-            if (!isCurrentlyOpen) {
-                historyRow.style.display = 'table-row';
-                setTimeout(() => {
-                    detailContent.style.maxHeight = `${detailContent.scrollHeight + 10}px`; 
-                }, 50);
-
-                if (icon) icon.style.transform = 'rotate(90deg)';
-                
-                row.classList.remove(rowBg);
-                row.classList.add('bg-blue-100'); 
-            }
-        }
-
-        function toggleEditMode(event, docId) {
-            if (event) event.stopPropagation(); 
-
-            if (!isEditModeEnabled) {
-                console.warn("[경고] 수정 모드가 비활성화되어 있습니다. 먼저 비밀번호를 입력하여 활성화해주세요.");
-                return;
-            }
-            
-            if (editingId && editingId !== docId) {
-                console.warn(`[경고] 다른 항목의 편집을 먼저 저장하거나 취소해주세요.`);
-                return;
-            }
-            
-            const row = document.querySelector(`.data-row[data-doc-id="${docId}"]`);
-            if (!row) return;
-
-            const historyIcon = row.querySelector('.toggle-icon');
-            if (row.classList.contains('bg-blue-100') && historyIcon) {
-                toggleHistoryDetails(docId, row, historyIcon);
-            }
-            
-            editingId = docId;
-            row.classList.add('editing', 'bg-yellow-100', 'hover:bg-yellow-100');
-            
-            const statusGroup = getStatusGroup(row.getAttribute('data-status'));
-            const { rowBg, hoverBg } = getStatusClasses(statusGroup);
-            row.classList.remove(rowBg, hoverBg);
-
-
-            row.querySelectorAll('[data-field]').forEach(cell => {
-                cell.querySelector('.display-value').classList.add('hidden');
-                const input = cell.querySelector('.edit-input') || cell.querySelector('.edit-select');
-                if (input) input.classList.remove('hidden');
-            });
-            
-            const actionCell = row.querySelector('.data-action');
-            actionCell.innerHTML = `
-                <div class="flex flex-col space-y-1">
-                    <button onclick="saveChanges(event, '${docId}')" class="text-xs font-bold py-1 px-2 rounded-md bg-green-500 text-white hover:bg-green-600 transition duration-150 shadow-md">저장</button>
-                    <button onclick="cancelEdit(event, '${docId}')" class="text-xs font-bold py-1 px-2 rounded-md bg-red-500 text-white hover:bg-red-600 transition duration-150 shadow-md">취소</button>
-                </div>
-            `;
-            actionCell.onclick = (e) => e.stopPropagation();
-        }
-
-        async function saveChanges(event, docId) {
-            event.stopPropagation();
-
-            if (!isAuthReady) {
-                 console.error("데이터베이스 연결 준비 안됨.");
-                 return;
-            }
-            
-            const row = document.querySelector(`.data-row[data-doc-id="${docId}"]`);
-            if (!row) return;
-            
-            const employee = employeeData.find(d => d.docId === docId);
-            if (!employee) return;
-
-            const newValues = {};
-            const changes = {};
-
-            let hasChanges = false;
-            
-            row.querySelectorAll('[data-field]').forEach(cell => {
-                const fieldName = cell.getAttribute('data-field');
-                const input = cell.querySelector('.edit-input') || cell.querySelector('.edit-select');
-                
-                if (input) {
-                    const newValue = input.value.trim();
-                    const oldValue = input.getAttribute('data-old-value').trim();
-                    
-                    if (newValue !== oldValue) {
-                        hasChanges = true;
-                        newValues[fieldName] = newValue;
-
-                        changes[fieldName] = { from: oldValue, to: newValue };
-                        
-                        input.setAttribute('data-old-value', newValue);
-                    }
-                }
-            });
-
-            if (!hasChanges) {
-                console.log(`Doc ID ${docId}: 변경 사항이 없습니다. 편집 모드를 종료합니다.`);
-                cancelEdit(event, docId);
-                return;
-            }
-
-            showLoading();
-
-            const employeeName = newValues.name || employee.name; 
-            let typeDescription = `직원 상태 변경 (${employeeName})`;
-            
-            if (changes.status && changes.status.to === '퇴사' && changes.leoxStatus && changes.leoxStatus.to === '삭제') {
-                 typeDescription = `${employeeName}님 퇴사 및 ID 삭제 처리`;
-            } else if (changes.status && changes.status.to === '신청 없음' && changes.leoxStatus && changes.leoxStatus.to === '미존재' && (changes.name && changes.name.to === '없음')) {
-                 const formerName = changes.name ? changes.name.from : employee.name;
-                 typeDescription = `ID 초기화 (이전 사용자: ${formerName})`;
-            } else if (changes.status && changes.status.from === '신규 등록') {
-                 typeDescription = `신규 등록 항목 최종 저장 (${employeeName})`;
-            } else if (changes.status && changes.status.from === '신청 없음' && changes.name && changes.name.from === '없음') {
-                 typeDescription = `ID 재할당 및 신규 등록 (${employeeName})`;
-            } else if (changes.name) {
-                 typeDescription = `직원 이름 및 상태 변경 (${employeeName})`;
-            } else {
-                 typeDescription = `직원 상태 변경 (${employeeName})`;
-            }
-
-            const newHistoryEntry = {
-                date: new Date().toISOString().substring(0, 10),
-                type: typeDescription,
-                details: `${employeeName}님의 현황이 업데이트되었습니다. (${Object.keys(changes).length}개 필드 변경됨. 대시보드 수정 기능 사용)`,
-                changes: changes,
+                });
             };
 
-            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-            const COLLECTION_PATH = `artifacts/${appId}/public/data/employees`;
-            const { doc, updateDoc } = window.firebase;
-
-            try {
-                const docRef = doc(db, COLLECTION_PATH, docId);
-                
-                const fieldsToUpdate = { ...newValues };
-                
-                const updatedHistory = [newHistoryEntry, ...(employee.history || [])];
-                fieldsToUpdate.history = updatedHistory;
-
-                await updateDoc(docRef, fieldsToUpdate);
-
-                console.log(`Doc ID ${docId}의 데이터 업데이트 완료.`);
-
-            } catch (error) {
-                 console.error(`Doc ID ${docId} 업데이트 중 오류 발생:`, error);
-            } finally {
-                editingId = null;
-                hideLoading();
-            }
-        }
-
-        function cancelEdit(event, docId) {
-            if (event) event.stopPropagation();
-            
-            const row = document.querySelector(`.data-row[data-doc-id="${docId}"]`);
-            if (!row) return;
-
-            row.querySelectorAll('[data-field]').forEach(cell => {
-                const input = cell.querySelector('.edit-input') || cell.querySelector('.edit-select');
-                if (input) {
-                    input.value = input.getAttribute('data-old-value'); 
-                    input.classList.add('hidden');
-                }
-                cell.querySelector('.display-value').classList.remove('hidden');
-            });
-            
-            editingId = null;
-            row.classList.remove('editing', 'bg-yellow-100', 'hover:bg-yellow-100');
-            
-            filterTable();
-        }
-
-        const statusFilter = document.getElementById('statusFilter'); 
-        const searchFilter = document.getElementById('searchFilter');
-
-        const filterTable = () => {
-            const selectedStatus = statusFilter.value;
-            const searchQuery = searchFilter.value.toLowerCase().trim();
-
-            const filteredData = employeeData.filter(data => {
-                const statusMatch = (selectedStatus === '전체' || data.status === selectedStatus || (selectedStatus === '근무중' && data.status === '신규 등록')); 
-                const searchMatch = (
-                    searchQuery === '' || 
-                    data.name.toLowerCase().includes(searchQuery) || 
-                    data.leoxId.toLowerCase().includes(searchQuery) 
-                );
-                return statusMatch && searchMatch;
-            });
-
-            renderTable(filteredData);
-        };
-
-        document.addEventListener('DOMContentLoaded', () => {
-            showLoading();
-            initializeFirebase();
-            
-            document.querySelectorAll('.status-btn').forEach(button => {
-                button.addEventListener('click', (e) => {
-                    const status = e.target.getAttribute('data-status');
-                    document.getElementById('statusFilter').value = status;
-                    filterTable();
-                    updateStatusButtonStyles(status);
-                });
-            });
-
-            updateStatusButtonStyles(document.getElementById('statusFilter').value); 
-            
+            // 필터 이벤트 리스너 등록
+            statusFilter.addEventListener('change', filterTable);
             searchFilter.addEventListener('input', filterTable);
 
-            document.getElementById('toggleEditModeBtn').addEventListener('click', toggleEditModeActivation);
-            document.getElementById('addNewIdBtn').addEventListener('click', addNewEmployee);
-            updateEditModeUI(); 
-
-            document.getElementById('cancelPasswordBtn').addEventListener('click', hidePasswordModal);
-            document.getElementById('submitPasswordBtn').addEventListener('click', () => {
-                const password = document.getElementById('passwordInput').value;
-                checkPasswordAndActivate(password);
-            });
-            document.getElementById('passwordInput').addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    const password = document.getElementById('passwordInput').value;
-                    checkPasswordAndActivate(password);
-                }
-            });
-
-            document.getElementById('cancelDeleteBtn').addEventListener('click', () => {
-                document.getElementById('deleteConfirmationModal').classList.add('hidden');
-                idToDelete = null;
-            });
-            document.getElementById('confirmDeleteBtn').addEventListener('click', deleteEmployee);
+            // 초기 필터링 적용 (전체 보기 상태)
+            // renderTable()이 이미 데이터를 보여줬으므로, 필요 시 filterTable()을 호출합니다.
+            // filterTable(); 
         });
     </script>
 </body>
 </html>
+
+
+
