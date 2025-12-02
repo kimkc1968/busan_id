@@ -8,15 +8,18 @@
     <!-- Firebase SDK Modules for Persistence -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, setPersistence, browserSessionPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { 
             getFirestore, collection, query, onSnapshot, 
-            addDoc, updateDoc, deleteDoc, where, getDocs, doc, writeBatch, setDoc, getDoc 
+            addDoc, updateDoc, deleteDoc, where, getDocs, doc, writeBatch, setDoc, getDoc, setLogLevel
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         
+        // Firestore 디버그 로깅 활성화
+        setLogLevel('debug');
+
         // Firebase Global References (Accessible via window scope)
         window.firebase = {
-            initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged,
+            initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, setPersistence, browserSessionPersistence,
             getFirestore, collection, query, onSnapshot, addDoc, updateDoc, deleteDoc,
             where, getDocs, doc, writeBatch, setDoc, getDoc
         };
@@ -41,9 +44,11 @@
         }
         .data-row {
             transition: background-color 0.15s ease-in-out;
+            cursor: pointer; /* 클릭 가능한 행임을 표시 */
         }
         .data-row:not(.editing):hover {
             opacity: 0.95;
+            background-color: #f0f4f8;
         }
         .history-row {
             display: none;
@@ -69,7 +74,7 @@
             background-color: white;
         }
         .data-action {
-             cursor: pointer;
+             cursor: default;
         }
         .disabled-btn {
             opacity: 0.5;
@@ -100,6 +105,12 @@
             <div>
                 <h1 class="text-3xl font-extrabold text-gray-800">부산CX센터 직원 LeoX ID 및 현황 대시보드</h1>
                 <p class="text-md text-gray-500 mt-2">직원 현황을 직접 수정하고 변경 이력을 관리해보세요. (아이디는 변경 불가)</p>
+                <!-- DB Status Indicator Added Here -->
+                <div id="dbStatusIndicator" class="mt-2 text-sm font-semibold flex items-center space-x-2">
+                    <span class="text-gray-500">DB 연결 상태:</span>
+                    <span id="statusText" class="text-yellow-600">확인 중...</span>
+                    <div id="statusIcon" class="w-3 h-3 rounded-full bg-yellow-500 animate-pulse"></div>
+                </div>
             </div>
             <!-- Control Buttons Group -->
             <div class="flex flex-col sm:flex-row gap-3 flex-shrink-0">
@@ -150,9 +161,9 @@
                     <!-- Dynamic Rows and History Rows will be inserted here -->
                 </tbody>
             </table>
-            <!-- 검색 결과 없음 메시지 -->
-            <div id="noResults" class="hidden text-center p-8 text-lg text-gray-500">
-                검색 조건에 맞는 데이터가 없습니다.
+            <!-- 메시지 표시 공간 (검색 결과 없음, 데이터 로드 실패 등) -->
+            <div id="messageContainer" class="text-center p-8 text-lg text-gray-500">
+                데이터를 로드하는 중입니다...
             </div>
         </div>
 
@@ -191,11 +202,10 @@
     <script>
         // --- Firebase Setup & State Management ---
         let db, auth;
-        let employeeData = []; // 데이터베이스에서 가져온 데이터를 저장할 배열 (이제 휘발성이 아님)
+        let employeeData = []; // 데이터베이스에서 가져온 데이터를 저장할 배열 
         let isAuthReady = false;
         
-        // 현재 편집 중인 행의 ID를 저장하는 전역 변수 (이 ID는 Firestore doc.id 임)
-        let editingId = null;
+        let editingId = null; 
         let idToDelete = null; 
         
         const CORRECT_PASSWORD = 'leox1234'; 
@@ -204,38 +214,75 @@
         const statusOptions = ['근무중', '퇴사', '신청 없음', '신규 등록'];
         const leoxOptions = ['정상', '삭제', '미존재'];
 
+        const messageContainer = document.getElementById('messageContainer');
+        const statusTextElement = document.getElementById('statusText');
+        const statusIconElement = document.getElementById('statusIcon');
+        
+        /**
+         * DB 연결 상태 UI를 업데이트합니다.
+         * @param {string} status 'success', 'loading', 'error'
+         * @param {string} message 표시할 메시지
+         */
+        function updateDbStatusUI(status, message) {
+            statusTextElement.textContent = message;
+            statusIconElement.classList.remove('bg-yellow-500', 'bg-green-600', 'bg-red-600', 'animate-pulse');
+            statusIconElement.classList.add('w-3', 'h-3'); // 크기 초기화
+
+            switch (status) {
+                case 'success':
+                    statusTextElement.classList.remove('text-yellow-600', 'text-red-600');
+                    statusTextElement.classList.add('text-green-600');
+                    statusIconElement.classList.add('bg-green-600');
+                    break;
+                case 'error':
+                    statusTextElement.classList.remove('text-yellow-600', 'text-green-600');
+                    statusTextElement.classList.add('text-red-600');
+                    statusIconElement.classList.add('bg-red-600');
+                    break;
+                case 'loading':
+                default:
+                    statusTextElement.classList.remove('text-green-600', 'text-red-600');
+                    statusTextElement.classList.add('text-yellow-600');
+                    statusIconElement.classList.add('bg-yellow-500', 'animate-pulse');
+                    break;
+            }
+        }
+        
         /**
          * Firestore 및 Auth를 초기화하고 데이터 로드를 시작합니다.
          */
         async function initializeFirebase() {
-            // 전역 변수 존재 확인 및 설정
+            updateDbStatusUI('loading', '연결 확인 중...');
+            
             const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
             const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
             const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
             
-            // 필수 Firebase 모듈 (window.firebase를 통해 접근)
             const { initializeApp, getAuth, signInWithCustomToken, signInAnonymously, getFirestore, collection, onSnapshot } = window.firebase;
 
             if (Object.keys(firebaseConfig).length === 0) {
                 console.error("Firebase 설정이 제공되지 않았습니다. 데이터를 저장할 수 없습니다.");
+                updateDbStatusUI('error', '🔴 연결 실패: 설정 없음');
+                messageContainer.innerHTML = '<p class="text-red-600 font-bold">⚠️ Firebase 설정 데이터가 없어 연결할 수 없습니다.</p>';
+                hideLoading();
                 return;
             }
 
-            const app = initializeApp(firebaseConfig);
-            db = getFirestore(app);
-            auth = getAuth(app);
-            
-            // Firestore 컬렉션 경로 (공용 데이터)
-            const COLLECTION_PATH = `artifacts/${appId}/public/data/employees`;
-            
-            // 1. 인증 처리
             try {
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+                
+                const COLLECTION_PATH = `artifacts/${appId}/public/data/employees`;
+                
+                // 1. 인증 처리
                 if (initialAuthToken) {
                     await signInWithCustomToken(auth, initialAuthToken);
                 } else {
                     await signInAnonymously(auth);
                 }
                 isAuthReady = true;
+                updateDbStatusUI('success', '🟢 연결 성공');
                 console.log("Firebase 인증 성공.");
                 
                 // 2. 실시간 데이터 리스너 설정
@@ -243,69 +290,150 @@
                 onSnapshot(q, (snapshot) => {
                     const newEmployeeData = [];
                     snapshot.forEach(doc => {
-                        // Firestore doc.id를 내부 참조 ID로 사용하고, leoxId 필드가 UI에 표시되는 ID (busanXXX)입니다.
                         const data = doc.data();
                         newEmployeeData.push({ 
                             ...data, 
-                            docId: doc.id, // Firestore 문서 ID (삭제/수정 시 필요)
-                            leoxId: data.leoxId // UI에 표시되는 ID (busanXXX)
+                            docId: doc.id, 
+                            leoxId: data.leoxId 
                         });
                     });
                     employeeData = newEmployeeData;
                     console.log(`Firestore에서 ${employeeData.length}개의 데이터 업데이트됨.`);
-                    filterTable(); // 데이터가 업데이트될 때마다 테이블 다시 렌더링
-                    hideLoading();
-
-                    // 초기 데이터가 없는 경우 시뮬레이션 데이터로 채웁니다.
+                    
                     if (employeeData.length === 0) {
+                        // 데이터가 없으면 초기 데이터 시드 시도 (사용자 요청 목록으로 업데이트됨)
                         seedInitialData(db, COLLECTION_PATH);
                     }
+                    
+                    filterTable(); 
+                    hideLoading();
+
                 }, (error) => {
                     console.error("Firestore 데이터 로드 중 오류:", error);
+                    updateDbStatusUI('error', '🔴 데이터 로드 실패');
+                    messageContainer.innerHTML = '<p class="text-red-600 font-bold">⚠️ 데이터베이스에서 데이터를 불러오는 데 실패했습니다. 권한 문제일 수 있습니다.</p>';
                     hideLoading();
                 });
 
             } catch (error) {
-                console.error("Firebase 인증 또는 초기화 실패:", error);
+                console.error("Firebase 초기화 또는 인증 실패:", error);
+                updateDbStatusUI('error', '🔴 연결 실패: 인증 오류');
+                messageContainer.innerHTML = '<p class="text-red-600 font-bold">⚠️ Firebase 인증에 실패했습니다. (콘솔 로그 확인)</p>';
                 hideLoading();
             }
         }
         
         /**
-         * 초기 데이터 시뮬레이션 및 Firestore에 저장
+         * 초기 데이터 시뮬레이션 및 Firestore에 저장 (데이터가 0개일 때만 실행)
+         * 사용자 요청 데이터를 반영하여 업데이트되었습니다.
          */
         async function seedInitialData(db, COLLECTION_PATH) {
+            // 이 함수는 onSnapshot이 데이터를 0개로 보고했을 때만 호출되어야 합니다.
+            if (employeeData.length > 0) return; 
+
             const initialEmployees = [
-                { name: "김윤지", leoxId: "busan001", status: "근무중", leoxStatus: "정상", history: [{ date: new Date().toISOString().substring(0, 10), type: "최초 생성", details: "초기 데이터 등록" }] },
-                { name: "이정하", leoxId: "busan002", status: "퇴사", leoxStatus: "삭제", history: [{ date: new Date().toISOString().substring(0, 10), type: "최초 생성", details: "초기 데이터 등록" }] },
-                { name: "변정인", leoxId: "busan003", status: "근무중", leoxStatus: "정상", history: [{ date: new Date().toISOString().substring(0, 10), type: "최초 생성", details: "초기 데이터 등록" }] },
-                { name: "없음", leoxId: "busan004", status: "신청 없음", leoxStatus: "미존재", history: [{ date: new Date().toISOString().substring(0, 10), type: "최초 생성", details: "초기 데이터 등록" }] },
+                { name: "김윤지", leoxId: "busan001", status: "근무중", leoxStatus: "정상" },
+                { name: "이정하", leoxId: "busan002", status: "퇴사", leoxStatus: "삭제" },
+                { name: "변정인", leoxId: "busan003", status: "근무중", leoxStatus: "정상" },
+                { name: "노미라", leoxId: "busan004", status: "근무중", leoxStatus: "정상" },
+                { name: "강이은", leoxId: "busan005", status: "퇴사", leoxStatus: "삭제" },
+                { name: "한정임", leoxId: "busan006", status: "퇴사", leoxStatus: "삭제" },
+                { name: "박영웅", leoxId: "busan007", status: "퇴사", leoxStatus: "삭제" },
+                { name: "유지윤", leoxId: "busan008", status: "퇴사", leoxStatus: "삭제" },
+                { name: "없음", leoxId: "busan009", status: "신청 없음", leoxStatus: "미존재" },
+                { name: "박영웅", leoxId: "busan010", status: "퇴사", leoxStatus: "삭제" },
+                { name: "한정임", leoxId: "busan011", status: "퇴사", leoxStatus: "삭제" },
+                { name: "유지윤", leoxId: "busan012", status: "근무중", leoxStatus: "정상" },
+                { name: "오재용", leoxId: "busan013", status: "퇴사", leoxStatus: "삭제" },
+                { name: "최현진", leoxId: "busan014", status: "근무중", leoxStatus: "정상" },
+                { name: "박혜민", leoxId: "busan015", status: "퇴사", leoxStatus: "삭제" },
+                { name: "허다영", leoxId: "busan016", status: "근무중", leoxStatus: "정상" },
+                { name: "박다은", leoxId: "busan017", status: "근무중", leoxStatus: "정상" },
+                { name: "없음", leoxId: "busan018", status: "신청 없음", leoxStatus: "미존재" },
+                { name: "없음", leoxId: "busan019", status: "신청 없음", leoxStatus: "미존재" },
+                { name: "없음", leoxId: "busan020", status: "신청 없음", leoxStatus: "미존재" },
+                { name: "없음", leoxId: "busan021", status: "신청 없음", leoxStatus: "미존재" },
+                { name: "고성자", leoxId: "busan022", status: "근무중", leoxStatus: "정상" },
+                { name: "이수진", leoxId: "busan023", status: "근무중", leoxStatus: "정상" },
             ];
+
+            // 모든 항목에 초기 이력 추가
+            const seededEmployees = initialEmployees.map(emp => ({
+                ...emp,
+                history: [{ 
+                    date: new Date().toISOString().substring(0, 10), 
+                    type: "최초 생성 (요청 데이터)", 
+                    details: "사용자 요청에 따라 초기 데이터로 등록됨." 
+                }]
+            }));
             
             const { collection, addDoc } = window.firebase;
 
             console.log("초기 데이터가 없어 시뮬레이션 데이터로 Firestore를 채웁니다...");
-            for (const employee of initialEmployees) {
-                await addDoc(collection(db, COLLECTION_PATH), employee);
+            messageContainer.innerHTML = '<p class="text-blue-600 font-bold">데이터베이스에 데이터가 없어 샘플 데이터를 생성 중입니다...</p>';
+            
+            const batch = window.firebase.writeBatch(db);
+            
+            for (const employee of seededEmployees) {
+                 const newDocRef = window.firebase.doc(collection(db, COLLECTION_PATH));
+                 batch.set(newDocRef, employee);
+            }
+            
+            try {
+                await batch.commit();
+                console.log("시뮬레이션 데이터 일괄 저장 성공.");
+            } catch (e) {
+                console.error("시뮬레이션 데이터 저장 실패:", e);
+                messageContainer.innerHTML = '<p class="text-red-600 font-bold">⚠️ 샘플 데이터 생성에 실패했습니다. (콘솔 로그 확인)</p>';
             }
             // onSnapshot 리스너가 새 데이터를 자동으로 가져와 테이블을 업데이트할 것입니다.
         }
 
-        /**
-         * 로딩 오버레이 표시
-         */
+        // --- 로딩 및 메시지 처리 ---
         function showLoading() {
             document.getElementById('loadingOverlay').classList.remove('hidden');
         }
 
-        /**
-         * 로딩 오버레이 숨김
-         */
         function hideLoading() {
             document.getElementById('loadingOverlay').classList.add('hidden');
         }
 
-        // --- 유틸리티 함수 (대부분 변경 없음) ---
+        /**
+         * 테이블 본문을 숨기고 메시지를 표시하거나, 메시지를 숨기고 테이블을 표시합니다.
+         */
+        function displayMessage(type, text) {
+            const tbody = document.getElementById('employeeTableBody');
+            const container = document.getElementById('messageContainer');
+
+            if (type === 'none') {
+                container.classList.add('hidden');
+                tbody.style.display = 'table-row-group';
+                return;
+            }
+
+            tbody.style.display = 'none';
+            container.classList.remove('hidden');
+            
+            let color = 'text-gray-500';
+            let prefix = '';
+            if (type === 'error') {
+                color = 'text-red-600';
+                prefix = '⚠️ 오류: ';
+            } else if (type === 'info') {
+                color = 'text-blue-600';
+                prefix = 'ℹ️ 정보: ';
+            } else if (type === 'noresults') {
+                color = 'text-gray-500';
+                prefix = '🔍 ';
+            }
+            
+            container.className = `text-center p-8 text-lg ${color}`;
+            container.innerHTML = `<p class="font-bold">${prefix}${text}</p>`;
+        }
+
+
+        // --- UI 업데이트 및 액션 함수 (생략된 부분은 변경 없음) ---
+
         function getStatusGroup(statusText) {
             switch (statusText) {
                 case '근무중':
@@ -404,8 +532,6 @@
                 </div>
             `;
         }
-        
-        // --- UI 업데이트 및 액션 함수 ---
 
         function updateEditModeUI() {
             const toggleBtn = document.getElementById('toggleEditModeBtn');
@@ -468,12 +594,8 @@
             }
         }
 
-        /**
-         * Firestore의 leoxId 필드에서 다음 순번 (busanXXX)을 계산하여 반환합니다.
-         */
         function getNextEmployeeId() {
             let maxNum = 0;
-            // 모든 ID에서 숫자 부분만 추출하여 최대값을 찾습니다. (데이터가 아직 없으면 0)
             employeeData.forEach(data => {
                 const match = data.leoxId.match(/^busan(\d+)$/);
                 if (match) {
@@ -489,9 +611,6 @@
             return `busan${nextIdSuffix}`;
         }
 
-        /**
-         * 신규 ID를 생성하고 Firestore에 추가합니다.
-         */
         async function addNewEmployee() {
             if (!isEditModeEnabled || !isAuthReady) {
                 console.error("수정 모드가 비활성화되었거나 데이터베이스가 준비되지 않았습니다.");
@@ -513,32 +632,25 @@
             const COLLECTION_PATH = `artifacts/${appId}/public/data/employees`;
 
             try {
-                // Firestore에 추가
                 const { collection, addDoc } = window.firebase;
                 const docRef = await addDoc(collection(db, COLLECTION_PATH), newEmployeeData);
                 console.log(`신규 ID ${newId} (Doc ID: ${docRef.id})가 데이터베이스에 추가되었습니다.`);
                 
-                // onSnapshot이 데이터를 가져와 테이블을 리렌더링할 때까지 기다립니다.
-                // 렌더링 후, 신규 행을 즉시 편집 모드로 전환합니다.
                 setTimeout(() => {
+                    // 새 행이 onSnapshot을 통해 로드된 후 편집 모드를 토글합니다.
                     const newRow = document.querySelector(`.data-row[data-leox-id="${newId}"]`);
                     if (newRow) {
                         toggleEditMode(null, newRow.getAttribute('data-doc-id'));
                     }
-                }, 500); // 충분한 시간을 기다립니다.
+                }, 500); 
 
             } catch (error) {
                 console.error("신규 직원 추가 중 오류 발생:", error);
             } finally {
-                // hideLoading()은 onSnapshot에서 처리될 것이지만, 오류 발생 시 대비하여 추가합니다.
                 hideLoading();
             }
         }
 
-
-        /**
-         * ID 삭제 확인 모달을 표시하고, Firestore에서 삭제를 처리합니다.
-         */
         function confirmAndDelete(event, docId, employeeName, leoxId) {
             if (event) event.stopPropagation();
 
@@ -555,9 +667,6 @@
             document.getElementById('deleteConfirmationModal').classList.remove('hidden');
         }
 
-        /**
-         * Firestore에서 ID 삭제를 실행합니다.
-         */
         async function deleteEmployee() {
             if (!idToDelete || !isAuthReady) return;
 
@@ -569,7 +678,6 @@
             const { doc, deleteDoc } = window.firebase;
 
             try {
-                // Firestore에서 문서 삭제
                 const docRef = doc(db, COLLECTION_PATH, idToDelete);
                 await deleteDoc(docRef);
 
@@ -577,10 +685,9 @@
             } catch (error) {
                 console.error(`Doc ID ${idToDelete} 삭제 중 오류 발생:`, error);
             } finally {
-                // UI 업데이트는 onSnapshot 리스너가 처리합니다.
                 document.getElementById('deleteConfirmationModal').classList.add('hidden');
                 idToDelete = null;
-                // hideLoading()은 onSnapshot에서 처리됩니다.
+                hideLoading();
             }
         }
 
@@ -597,31 +704,29 @@
             });
         }
         
-        /**
-         * 필터링된 데이터로 테이블 본문을 렌더링합니다.
-         */
         function renderTable(dataToRender = employeeData) {
             const tbody = document.getElementById('employeeTableBody');
-            const noResults = document.getElementById('noResults');
-            if (!tbody || !noResults) return;
-
-            // leoxId (busanXXX) 순으로 정렬
+            
             dataToRender.sort((a, b) => a.leoxId.localeCompare(b.leoxId));
 
             if (dataToRender.length === 0) {
                 tbody.innerHTML = '';
-                noResults.classList.remove('hidden');
+                // 데이터는 있지만 필터링 결과가 없는 경우 vs. 데이터 로드 실패/데이터 자체가 없는 경우
+                if (employeeData.length > 0) {
+                    displayMessage('noresults', '검색 조건에 맞는 데이터가 없습니다.');
+                } else if (statusTextElement.textContent.includes('연결 성공')) {
+                    displayMessage('info', '데이터베이스에 직원 정보가 없습니다. "신규 ID 생성" 버튼을 클릭하여 시작하거나 기본 데이터를 로드하세요.');
+                }
                 return;
             }
 
-            noResults.classList.add('hidden');
+            displayMessage('none', '');
             
             const htmlContent = dataToRender.map(data => {
                 const statusGroup = getStatusGroup(data.status);
                 const { rowBg, hoverBg } = getStatusClasses(statusGroup); 
                 const hasHistory = data.history && data.history.length > 0;
                 
-                // docId는 Firestore 참조용, leoxId는 UI 표시용
                 const isEditing = data.docId === editingId;
 
                 let actionContent = '';
@@ -640,7 +745,6 @@
 
                     if (isEditModeEnabled) {
                         editButtonHtml = `<button onclick="toggleEditMode(event, '${data.docId}')" class="text-xs font-bold py-1 px-2 rounded-md bg-blue-500 text-white hover:bg-blue-600 transition duration-150 shadow-md">수정</button>`;
-                        // 삭제 버튼 클릭 시 docId, name, leoxId를 전달
                         deleteButtonHtml = `<button onclick="confirmAndDelete(event, '${data.docId}', '${data.name}', '${data.leoxId}')" class="text-xs font-bold py-1 px-2 rounded-md bg-red-500 text-white hover:bg-red-600 transition duration-150 shadow-md">삭제</button>`;
                     }
                     
@@ -674,9 +778,8 @@
                 ).join('');
 
 
-                // data-doc-id는 Firestore 참조용. data-leox-id는 검색/로직용 (busanXXX)
                 const mainRow = `
-                    <tr class="data-row ${isEditing ? 'editing bg-yellow-100 hover:bg-yellow-100' : rowBg + ' ' + hoverBg}" data-doc-id="${data.docId}" data-leox-id="${data.leoxId}" data-status="${data.status}" data-leox-status="${data.leoxStatus}" data-name="${data.name}">
+                    <tr class="data-row ${isEditing ? 'editing bg-yellow-100 hover:bg-yellow-100' : rowBg + ' ' + hoverBg}" data-doc-id="${data.docId}" data-leox-id="${data.leoxId}" data-status="${data.status}" data-leox-status="${data.leoxStatus}" data-name="${data.name}" onclick="handleActionOrHistory(event, '${data.docId}', ${hasHistory})">
                         <!-- 아이디 (편집 불가) -->
                         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 text-center font-semibold">${data.leoxId}</td>
                         
@@ -703,13 +806,12 @@
                         </td>
                         
                         <!-- 액션/이력 버튼 및 아이콘 -->
-                        <td class="px-3 py-4 text-center data-action" onclick="handleActionOrHistory(event, '${data.docId}', ${hasHistory})">
+                        <td class="px-3 py-4 text-center data-action">
                             ${actionContent}
                         </td>
                     </tr>
                 `;
 
-                // data-history-id도 docId로 변경
                 const historyRow = `
                     <tr class="history-row" data-history-id="${data.docId}">
                         <td colspan="5" class="p-0 border-b border-gray-200">
@@ -726,9 +828,6 @@
             tbody.innerHTML = htmlContent;
         }
 
-        /**
-         * 이력 아이콘 클릭 시 이력 섹션의 가시성을 토글합니다.
-         */
         function handleActionOrHistory(event, docId, hasHistory) {
             if (editingId) return;
 
@@ -745,9 +844,6 @@
             }
         }
 
-        /**
-         * 이력 상세 정보를 토글합니다.
-         */
         function toggleHistoryDetails(docId, row, icon) {
             const tbody = document.getElementById('employeeTableBody');
             const historyRow = tbody.querySelector(`tr[data-history-id="${docId}"]`);
@@ -760,7 +856,6 @@
             const { rowBg } = getStatusClasses(statusGroup);
 
 
-            // 모든 열린 이력 행 닫기
             tbody.querySelectorAll('.history-row').forEach(tr => {
                 const relatedDocId = tr.getAttribute('data-history-id');
                 const relatedRow = tbody.querySelector(`.data-row[data-doc-id="${relatedDocId}"]`);
@@ -780,7 +875,6 @@
                 }
             });
             
-            // 현재 행 열기/닫기 처리
             if (!isCurrentlyOpen) {
                 historyRow.style.display = 'table-row';
                 setTimeout(() => {
@@ -794,9 +888,6 @@
             }
         }
 
-        /**
-         * 테이블 행을 편집 모드로 전환합니다. (docId 사용)
-         */
         function toggleEditMode(event, docId) {
             if (event) event.stopPropagation(); 
 
@@ -842,9 +933,6 @@
             actionCell.onclick = (e) => e.stopPropagation();
         }
 
-        /**
-         * 변경 사항을 Firestore에 저장하고 새 이력을 생성합니다.
-         */
         async function saveChanges(event, docId) {
             event.stopPropagation();
 
@@ -864,7 +952,6 @@
 
             let hasChanges = false;
             
-            // 1. 새 값 수집 및 변경 사항 확인
             row.querySelectorAll('[data-field]').forEach(cell => {
                 const fieldName = cell.getAttribute('data-field');
                 const input = cell.querySelector('.edit-input') || cell.querySelector('.edit-select');
@@ -879,7 +966,6 @@
 
                         changes[fieldName] = { from: oldValue, to: newValue };
                         
-                        // 변경된 값으로 data-old-value 업데이트 (임시)
                         input.setAttribute('data-old-value', newValue);
                     }
                 }
@@ -893,11 +979,9 @@
 
             showLoading();
 
-            // 2. 이력 항목 생성 (변경 사항이 있을 때만)
             const employeeName = newValues.name || employee.name; 
             let typeDescription = `직원 상태 변경 (${employeeName})`;
             
-            // ... (Type Description 결정 로직은 기존과 동일)
             if (changes.status && changes.status.to === '퇴사' && changes.leoxStatus && changes.leoxStatus.to === '삭제') {
                  typeDescription = `${employeeName}님 퇴사 및 ID 삭제 처리`;
             } else if (changes.status && changes.status.to === '신청 없음' && changes.leoxStatus && changes.leoxStatus.to === '미존재' && (changes.name && changes.name.to === '없음')) {
@@ -920,7 +1004,6 @@
                 changes: changes,
             };
 
-            // 3. Firestore 데이터 업데이트
             const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
             const COLLECTION_PATH = `artifacts/${appId}/public/data/employees`;
             const { doc, updateDoc } = window.firebase;
@@ -928,10 +1011,8 @@
             try {
                 const docRef = doc(db, COLLECTION_PATH, docId);
                 
-                // 업데이트할 필드 객체 생성
                 const fieldsToUpdate = { ...newValues };
                 
-                // 기존 history 배열에 새 이력을 추가
                 const updatedHistory = [newHistoryEntry, ...(employee.history || [])];
                 fieldsToUpdate.history = updatedHistory;
 
@@ -942,42 +1023,31 @@
             } catch (error) {
                  console.error(`Doc ID ${docId} 업데이트 중 오류 발생:`, error);
             } finally {
-                // 4. 편집 모드 종료 (onSnapshot이 렌더링을 처리)
                 editingId = null;
-                // hideLoading()은 onSnapshot에서 처리됩니다.
+                hideLoading();
             }
         }
 
-        /**
-         * 변경 사항을 저장하지 않고 편집 모드를 종료합니다. (docId 사용)
-         */
         function cancelEdit(event, docId) {
             if (event) event.stopPropagation();
             
             const row = document.querySelector(`.data-row[data-doc-id="${docId}"]`);
             if (!row) return;
 
-            // 1. 입력 필드 숨기기 / 디스플레이 값 보이기
             row.querySelectorAll('[data-field]').forEach(cell => {
                 const input = cell.querySelector('.edit-input') || cell.querySelector('.edit-select');
                 if (input) {
-                    // 값은 old-value로 다시 설정
                     input.value = input.getAttribute('data-old-value'); 
                     input.classList.add('hidden');
                 }
                 cell.querySelector('.display-value').classList.remove('hidden');
             });
             
-            // 2. 편집 모드 플래그 및 스타일 제거
             editingId = null;
             row.classList.remove('editing', 'bg-yellow-100', 'hover:bg-yellow-100');
             
-            // 3. 테이블 리렌더링 (원래 상태로 복원)
             filterTable();
         }
-
-
-        // --- 필터링 및 초기화 로직 ---
 
         const statusFilter = document.getElementById('statusFilter'); 
         const searchFilter = document.getElementById('searchFilter');
@@ -991,7 +1061,7 @@
                 const searchMatch = (
                     searchQuery === '' || 
                     data.name.toLowerCase().includes(searchQuery) || 
-                    data.leoxId.toLowerCase().includes(searchQuery) // leoxId (busanXXX)로 검색
+                    data.leoxId.toLowerCase().includes(searchQuery) 
                 );
                 return statusMatch && searchMatch;
             });
