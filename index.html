@@ -10,6 +10,8 @@
         body {
             font-family: 'Inter', sans-serif;
             background-color: #eef2f6; /* Light, clean background */
+            /* Ensure the body can scroll vertically */
+            min-height: 100vh;
         }
         /* Custom styles for status badges */
         .status-badge {
@@ -50,6 +52,7 @@
                         <option value="전체">전체 보기</option>
                         <option value="근무중">🟢 근무중</option>
                         <option value="퇴사">🔴 퇴사</option>
+                        <option value="신규등록">🟡 신규등록</option> <!-- 신규등록 옵션 추가 -->
                         <option value="신청 없음">⚫️ 신청 없음</option>
                     </select>
                 </div>
@@ -109,6 +112,7 @@
             { name: "없음", id: "busan021", status: "신청 없음", leoxStatus: "미존재" },
             { name: "고성자", id: "busan022", status: "근무중", leoxStatus: "정상" },
             { name: "이수진", id: "busan023", status: "근무중", leoxStatus: "정상" },
+            // 신규 등록 데이터
             { name: "이현지", id: "busan11", status: "신규등록", leoxStatus: "정상" },
             { name: "조혜륜", id: "busan15", status: "신규등록", leoxStatus: "정상" }
         ];
@@ -116,7 +120,7 @@
         /**
          * 상태 텍스트에 따라 기본 색상 그룹을 반환합니다.
          * @param {string} statusText - 상태 텍스트.
-         * @returns {string} 'green', 'red', 'gray' 중 하나.
+         * @returns {string} 'green', 'red', 'yellow', 'gray' 중 하나.
          */
         function getStatusGroup(statusText) {
             switch (statusText) {
@@ -126,6 +130,8 @@
                 case '퇴사':
                 case '삭제':
                     return 'red';
+                case '신규등록': // 신규등록 상태는 노란색 그룹으로 지정
+                    return 'yellow';
                 case '신청 없음':
                 case '미존재':
                 default:
@@ -135,7 +141,7 @@
 
         /**
          * 상태 그룹에 따라 뱃지와 행 배경색 클래스를 반환합니다.
-         * @param {string} statusGroup - 'green', 'red', 'gray' 중 하나.
+         * @param {string} statusGroup - 'green', 'red', 'yellow', 'gray' 중 하나.
          * @returns {{badgeBg: string, badgeText: string, rowBg: string}} Tailwind CSS 클래스 객체.
          */
         function getStatusClasses(statusGroup) {
@@ -150,7 +156,13 @@
                     return { 
                         badgeBg: 'bg-red-100', 
                         badgeText: 'text-red-700', 
-                        rowBg: 'bg-red-50'   // 행 배경색: 연한 붉은색
+                        rowBg: 'bg-red-50'  // 행 배경색: 연한 붉은색
+                    };
+                case 'yellow': // 노란색 그룹 클래스 추가
+                    return {
+                        badgeBg: 'bg-yellow-100',
+                        badgeText: 'text-yellow-800', 
+                        rowBg: 'bg-yellow-50' // 행 배경색: 연한 노란색
                     };
                 case 'gray':
                 default:
@@ -182,6 +194,7 @@
 
             // 데이터 배열을 순회하며 HTML 문자열 생성
             const htmlContent = employeeData.map(data => {
+                // 근무여부 상태를 기준으로 행 배경색 결정
                 const statusGroup = getStatusGroup(data.status);
                 const { rowBg } = getStatusClasses(statusGroup);
                 
@@ -262,8 +275,3 @@
     </script>
 </body>
 </html>
-
-
-
-
-
